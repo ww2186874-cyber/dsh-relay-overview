@@ -56,6 +56,12 @@ function amountText(data) {
   return `${scope} · 剩余 ${money(data.remaining, data.unit)} / 限额 ${money(data.total, data.unit)}`
 }
 
+function visualAmountText(data) {
+  if (data.mode === 'unlimited') return '∞'
+  if (data.mode === 'wallet') return money(data.remaining, data.unit)
+  return `${money(data.remaining, data.unit)}/${money(data.total, data.unit)}`
+}
+
 function createBalanceRequestManager({
   fetchImpl,
   createController,
@@ -176,14 +182,14 @@ function BalanceIndicator({ wide }) {
     : null
   const tone = data === null ? 'unavailable' : toneOf(percent, data.mode)
   const stale = data !== null && state.error !== null
-  const displayName = data?.displayName || 'Relay'
   const summary = data === null ? '' : amountText(data)
+  const visualAmount = data === null ? '' : visualAmountText(data)
   const title = data === null
-    ? (state.loading ? '正在查询中转额度' : `中转额度不可用：${state.error || '未知错误'}。点击重试`)
-    : `${data.planName ? `${data.planName} · ` : ''}${summary}${Number.isFinite(percent) ? `（${percentText(percent)}）` : ''}${stale ? ` · 数据可能已过期：${state.error}` : ''}。点击刷新`
+    ? (state.loading ? '…' : (state.error || '—'))
+    : `${visualAmount}${Number.isFinite(percent) ? ` · ${percentText(percent)}` : ''}${stale ? ` · ${state.error}` : ''}`
   const label = data === null
     ? (state.loading ? '中转额度查询中' : '中转额度不可用')
-    : `${displayName}，${summary}${Number.isFinite(percent) ? `，剩余 ${percentText(percent)}` : ''}${stale ? '，数据可能已过期' : ''}`
+    : `${summary}${Number.isFinite(percent) ? `，剩余 ${percentText(percent)}` : ''}${stale ? '，数据可能已过期' : ''}`
 
   if (!wide) {
     const compact = data === null
@@ -211,13 +217,12 @@ function BalanceIndicator({ wide }) {
     'aria-label': label,
     onClick: refresh,
   },
-  React.createElement('span', { className: 'relay-balance__header' },
-    React.createElement('span', { className: 'relay-balance__name' }, displayName),
-    React.createElement('span', { className: 'relay-balance__percent' }, data === null
-      ? (state.loading ? '查询中…' : '不可用')
-      : (Number.isFinite(percent) ? percentText(percent) : scopeLabel(data))),
-    stale ? React.createElement('span', { className: 'relay-balance__stale', 'aria-hidden': 'true' }, '!') : null),
-  React.createElement('span', { className: 'relay-balance__amount' }, data === null ? (state.error || '正在读取额度') : summary),
+  React.createElement('span', { className: 'relay-balance__summary' },
+    React.createElement('span', { className: 'relay-balance__amount' }, data === null ? '—' : visualAmount),
+    stale ? React.createElement('span', { className: 'relay-balance__stale', 'aria-hidden': 'true' }, '!') : null,
+    Number.isFinite(percent)
+      ? React.createElement('span', { className: 'relay-balance__percent' }, percentText(percent))
+      : null),
   Number.isFinite(percent)
     ? React.createElement('span', { className: 'relay-balance__track', 'aria-hidden': 'true' },
       React.createElement('span', { className: 'relay-balance__fill', style: { width: `${percent}%` } }))
@@ -230,11 +235,10 @@ const css = `
 .relay-balance:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
 .relay-balance--healthy{--relay-tone:#22a06b}.relay-balance--warning{--relay-tone:#d49b16}.relay-balance--danger{--relay-tone:#df4b4b}.relay-balance--neutral{--relay-tone:var(--dsw-alias-state-business-primary,#3b82f6)}.relay-balance--unavailable{--relay-tone:var(--dsw-alias-label-caption,#8a8a8a)}
 .relay-balance.is-loading{opacity:.78}
-.relay-balance--wide{width:100%;min-width:100%;flex:0 0 100%;border-color:var(--dsw-alias-border-l1);border-radius:9px;padding:7px 9px 8px;text-align:left;display:flex;flex-direction:column;gap:4px;align-self:center}
+.relay-balance--wide{width:100%;min-width:100%;flex:0 0 100%;border-color:var(--dsw-alias-border-l1);border-radius:9px;padding:9px 10px 10px;text-align:left;display:flex;flex-direction:column;gap:7px;align-self:center}
 :where(*):has(> [data-slot="sidebar.footer.action"] > .relay-balance--wide){flex-wrap:wrap;row-gap:4px}
 :where(*):has(> [data-slot="sidebar.footer.action"] > .relay-balance--rail){flex-direction:column;align-items:center;row-gap:4px}
-.relay-balance__header{width:100%;display:flex;align-items:center;gap:6px;line-height:16px}.relay-balance__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:650;letter-spacing:.02em}.relay-balance__percent{margin-left:auto;flex:none;color:var(--relay-tone);font-size:11px;font-variant-numeric:tabular-nums}.relay-balance__stale,.relay-balance__warning{color:#d49b16;font-weight:800}
-.relay-balance__amount{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:15px;font-variant-numeric:tabular-nums}
+.relay-balance__summary{width:100%;display:flex;align-items:baseline;gap:8px;line-height:18px}.relay-balance__amount{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}.relay-balance__percent{margin-left:auto;flex:none;color:var(--relay-tone);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}.relay-balance__stale,.relay-balance__warning{color:#d49b16;font-weight:800}
 .relay-balance__track{width:100%;height:4px;overflow:hidden;border-radius:999px;background:var(--dsw-alias-bg-base)}.relay-balance__fill{height:100%;display:block;border-radius:inherit;background:var(--relay-tone);transition:width .3s ease}
 .relay-balance--rail{width:36px;height:36px;padding:4px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center}
 .relay-balance__ring{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-primary);font-size:8px;font-weight:700;font-variant-numeric:tabular-nums;background:radial-gradient(circle at center,var(--dsw-specific-sidebar-fill) 58%,transparent 60%),conic-gradient(var(--relay-tone) 0deg,var(--dsw-alias-border-l1) 0)}

@@ -272,13 +272,18 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.match(quotaWide.props.className, /relay-balance--wide/)
   assert.match(quotaRail.props.className, /has-percent/)
   assert.equal(quotaRail.children[0].children[0], '40')
-  assert.match(quotaWide.children[1].children[0], /剩余 \$40\.00 \/ 限额 \$100\.00/)
-  assert.match(quotaWide.props.title, /数据可能已过期/)
+  assert.equal(quotaWide.children[0].children[0].children[0], '$40.00/$100.00')
+  assert.equal(quotaWide.children[0].children[2].children[0], '40.0%')
+  assert.equal(quotaWide.children[1].children[0].props.style.width, '40%')
+  assert.doesNotMatch(quotaWide.children[0].children[0].children[0], /My Relay|剩余|限额/)
+  assert.equal(quotaWide.props.title, '$40.00/$100.00 · 40.0% · temporary failure')
 
   assert.doesNotMatch(walletRail.props.className, /has-percent/)
   assert.equal(walletRail.children[0].children[0], '$40')
-  assert.match(walletWide.children[1].children[0], /钱包余额 \$40\.00 · 当前 Key 累计消费 \$12\.00/)
-  assert.equal(walletWide.children[2], null)
+  assert.equal(walletWide.children[0].children[0].children[0], '$40.00')
+  assert.equal(walletWide.children[0].children[1], null)
+  assert.equal(walletWide.children[0].children[2], null)
+  assert.equal(walletWide.children[1], null)
 })
 
 test('unlimited rendering is explicit and remains accessible', () => {
@@ -289,7 +294,9 @@ test('unlimited rendering is explicit and remains accessible', () => {
   }
   const wide = renderIndicator(state, true)
   const rail = renderIndicator(state, false)
-  assert.match(wide.children[1].children[0], /不限额/)
+  assert.equal(wide.children[0].children[0].children[0], '∞')
+  assert.equal(wide.children[0].children[2], null)
+  assert.equal(wide.children[1], null)
   assert.equal(rail.children[0].children[0], '∞')
   assert.match(wide.props['aria-label'], /不限额/)
 })

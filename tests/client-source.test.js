@@ -215,10 +215,14 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   let cleared
   let visibilityHandler
   let removedHandler
+  let refreshEventHandler
+  let removedRefreshEventHandler
   const manager = { refresh() { refreshes += 1 }, abort() { aborts += 1 } }
   const windowObject = {
     setInterval(callback, delay) { intervalCallback = callback; intervalDelay = delay; return 42 },
     clearInterval(id) { cleared = id },
+    addEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); refreshEventHandler = callback },
+    removeEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); removedRefreshEventHandler = callback },
   }
   const documentObject = {
     visibilityState: 'visible',
@@ -231,14 +235,16 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   assert.equal(intervalDelay, 60_000)
   intervalCallback()
   visibilityHandler()
-  assert.equal(refreshes, 3)
+  refreshEventHandler()
+  assert.equal(refreshes, 4)
   documentObject.visibilityState = 'hidden'
   intervalCallback()
   visibilityHandler()
-  assert.equal(refreshes, 3)
+  assert.equal(refreshes, 4)
   dispose()
   assert.equal(cleared, 42)
   assert.equal(removedHandler, visibilityHandler)
+  assert.equal(removedRefreshEventHandler, refreshEventHandler)
   assert.equal(aborts, 1)
 })
 
@@ -315,18 +321,42 @@ test('client source preserves lifecycle, generic Slot identity, and rc8 layout c
   assert.equal(source.includes('hHd-Xa_'), false)
 })
 
-test('client contains no credential metadata or direct upstream access', () => {
+test('client uses write-only credential APIs and never calls an upstream URL directly', () => {
   for (const text of [source, built]) {
     assert.equal(text.includes('TEST_ONLY_SECRET_DO_NOT_USE'), false)
     assert.equal(text.includes('apiKeyEnv'), false)
     assert.equal(text.includes('authorization'), false)
     assert.equal(text.includes('Bearer '), false)
-    assert.equal(/https:\/\//i.test(text), false)
+    assert.equal(text.includes('localStorage'), false)
     assert.match(text, /\/relay-balance\/status/)
+    assert.match(text, /\/relay-balance\/test/)
+    assert.match(text, /\/relay-balance\/save/)
+    assert.match(text, /api\.credentials\.describe/)
+    assert.equal(text.includes('api.credentials.set'), false)
+    assert.match(text, /type: 'password'/)
+    assert.match(text, /callRelayConnection\(fetch/)
   }
 })
 
-test('Client apply owns its style and registers the generic public Slot entry', () => {
+test('settings helper sends test and save payloads only to local Host routes', async () => {
+  const seen = []
+  const data = { mode: 'quota', remaining: 40, total: 100, percent: 40, unit: 'USD' }
+  const fetchImpl = async (url, init) => {
+    seen.push({ url, init })
+    return { ok: true, status: 200, json: async () => ({ ok: true, data }) }
+  }
+  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-balance/test', {
+    baseURL: 'https://relay.test/v1', apiKey: 'SECRET',
+  }), data)
+  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-balance/save', {
+    baseURL: 'https://relay.test/v1', apiKey: 'SECRET', expectedRevision: 7,
+  }), data)
+  assert.deepEqual(seen.map((entry) => entry.url), ['/relay-balance/test', '/relay-balance/save'])
+  assert.ok(seen.every((entry) => entry.init.method === 'POST' && entry.init.credentials === 'same-origin'))
+  assert.equal(JSON.parse(seen[1].init.body).expectedRevision, 7)
+})
+
+test('Client apply owns styles and registers both sidebar and settings entries', () => {
   const appended = []
   const removed = []
   const documentObject = {
@@ -337,34 +367,42 @@ test('Client apply owns its style and registers the generic public Slot entry', 
     head: { appendChild(node) { appended.push(node) } },
   }
   let styleDispose
-  let injectedName
-  let injectedFactory
-  let registration
-  let component
+  const injected = new Map()
+  const registrations = []
+  const scope = { getSnapshot() {}, subscribe() {} }
   const client = evaluateSource({}, { document: documentObject })
   client.apply({
     effect(factory, description) {
       assert.equal(description, 'relay-balance: styles')
       styleDispose = factory()
     },
+    settingsScope: {
+      bind(options) { assert.equal(options.namespace, 'dsh-relay-balance'); return scope },
+    },
+    connection: { api: { credentials: { describe() {} } } },
     slots: {
-      inject(name, factory) { injectedName = name; injectedFactory = factory },
-      register(options, value) { registration = options; component = value; return () => {} },
+      inject(name, factory) { injected.set(name, factory) },
+      register(options, value) { registrations.push({ options, value }); return () => {} },
     },
   })
   assert.equal(appended.length, 1)
   assert.equal(appended[0].dataset.plugin, 'dsh-relay-balance')
   assert.match(appended[0].textContent, /\.relay-balance/)
-  assert.equal(injectedName, 'sidebar.footer.action')
-  injectedFactory()
-  assert.equal(registration.id, 'relay-balance')
-  assert.equal(registration.name, 'sidebar.footer.action')
-  assert.equal(registration.label, '中转额度')
-  assert.equal(component, client.BalanceIndicator)
+  assert.match(appended[0].textContent, /\.relay-settings/)
+  injected.get('sidebar.footer.action')()
+  injected.get('settings.section')()
+  assert.equal(registrations[0].options.id, 'relay-balance')
+  assert.equal(registrations[0].options.name, 'sidebar.footer.action')
+  assert.equal(registrations[0].options.label, '中转额度')
+  assert.equal(registrations[0].value, client.BalanceIndicator)
+  assert.equal(registrations[1].options.name, 'settings.section')
+  assert.equal(registrations[1].options.label, 'Relay Balance')
+  assert.equal(typeof registrations[1].value, 'function')
   styleDispose()
   assert.deepEqual(removed, appended)
 })
 
-test('Client compatibility check rejects an incomplete slots service', () => {
+test('Client compatibility check rejects incomplete required services', () => {
   assert.throws(() => clientExports.apply({ slots: {}, effect() {} }), /slots\.inject.*slots\.register/)
+  assert.throws(() => clientExports.apply({ slots: { inject() {}, register() {} }, effect() {} }), /settingsScope\.bind/)
 })

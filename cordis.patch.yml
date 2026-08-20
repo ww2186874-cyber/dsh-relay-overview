@@ -1,10 +1,12 @@
-# Relay quota indicator. Override this row's complete config in the Profile patch
-# when the Sub2API-compatible provider is not named `sub2api`.
+# Relay quota indicator. Normal users configure URL + API Key in Settings.
+# The providerId is retained only as a 0.2.x migration fallback.
 - insert:
     - id: relay-balance
       name: 'dsh-relay-balance'
       config:
         providerId: sub2api
         displayName: Relay
+        baseURL: ''
+        credentialRef: ''
         usagePath: auto
         allowRemote: false

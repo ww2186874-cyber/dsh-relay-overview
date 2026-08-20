@@ -1,11 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import {
   apply,
   buildUsageUrls,
   createBalanceReader,
+  createConnectionTester,
+  createConnectionTestHandler,
+  createConnectionSaver,
+  createConnectionSaveHandler,
   createStatusHandler,
   normalizePluginConfig,
+  normalizeRelaySettings,
   normalizeSub2ApiUsage,
   resolveRelayConfig,
 } from '../lib/index.js'
@@ -15,7 +21,7 @@ const TEST_SECRET = 'TEST_ONLY_SECRET_DO_NOT_USE'
 const TEST_BASE_URL = 'https://relay.test.invalid/v1'
 const TEST_CREDENTIAL_REF = 'TEST_ONLY_CREDENTIAL_REF'
 const FIXED_TIME = '2026-08-20T00:00:00.000Z'
-const CONFIG = { providerId: 'test-relay', displayName: '测试中转', usagePath: 'auto', allowRemote: false }
+const CONFIG = { providerId: 'test-relay', displayName: '测试中转', baseURL: '', credentialRef: '', usagePath: 'auto', allowRemote: false }
 const WALLET = {
   mode: 'unrestricted',
   isValid: true,
@@ -38,9 +44,14 @@ function settingsValue() {
   return { providers: { 'test-relay': { baseURL: TEST_BASE_URL, apiKeyEnv: TEST_CREDENTIAL_REF } } }
 }
 
+function managedRefs(baseURL) {
+  const digest = createHash('sha256').update(new URL(baseURL).origin).digest('hex').slice(0, 32).toUpperCase()
+  return [`DSH_RELAY_BALANCE_${digest}_A`, `DSH_RELAY_BALANCE_${digest}_B`]
+}
+
 function readerOptions(overrides = {}) {
   return {
-    settings: { get: () => settingsValue() },
+    settings: { get: (ns) => ns === 'llm-pi-ai' ? settingsValue() : undefined },
     credentials: { resolve: async () => ({ value: TEST_SECRET }) },
     config: CONFIG,
     now: () => new Date(FIXED_TIME),
@@ -104,16 +115,29 @@ function assertSafeError(error, code) {
   return true
 }
 
-test('validates deploy configuration and resolves the selected provider', () => {
+test('validates deploy configuration and resolves plugin, composition, and legacy provider sources', () => {
   assert.deepEqual(normalizePluginConfig(CONFIG), CONFIG)
   assert.throws(() => normalizePluginConfig({ ...CONFIG, providerId: '../bad' }), /providerId/)
   assert.throws(() => normalizePluginConfig({ ...CONFIG, usagePath: 'relative' }), /usagePath/)
-  assert.deepEqual(resolveRelayConfig(settingsValue(), CONFIG), {
-    ...CONFIG,
-    usageURLs: [`${TEST_BASE_URL}/usage`, 'https://relay.test.invalid/usage'],
-    apiKeyEnv: TEST_CREDENTIAL_REF,
+  assert.throws(() => normalizePluginConfig({ ...CONFIG, baseURL: TEST_BASE_URL }), /set together/)
+  assert.deepEqual(normalizeRelaySettings({ baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }), {
+    baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto',
   })
-  assert.throws(() => resolveRelayConfig({ providers: {} }, CONFIG), /test-relay/)
+  assert.deepEqual(resolveRelayConfig(settingsValue(), CONFIG), {
+    displayName: CONFIG.displayName,
+    usageURLs: [`${TEST_BASE_URL}/usage`, 'https://relay.test.invalid/usage'],
+    credentialRef: TEST_CREDENTIAL_REF,
+    source: 'provider',
+  })
+  assert.deepEqual(resolveRelayConfig(settingsValue(), CONFIG, {
+    baseURL: 'https://direct.test.invalid/v1', credentialRef: 'DIRECT_KEY', usagePath: 'auto',
+  }), {
+    displayName: CONFIG.displayName,
+    usageURLs: ['https://direct.test.invalid/v1/usage', 'https://direct.test.invalid/usage'],
+    credentialRef: 'DIRECT_KEY',
+    source: 'plugin',
+  })
+  assert.throws(() => resolveRelayConfig({ providers: {} }, CONFIG), /Relay Balance 设置/)
 })
 
 test('builds safe Sub2API usage candidates and rejects unsafe base URLs', () => {
@@ -431,17 +455,198 @@ test('status handler emits success, 405, same-origin checks, and sanitized error
   assert.equal(failure.body.includes(TEST_SECRET), false)
 })
 
-test('apply registers the generic route and validates required Host services', () => {
-  let registered
+test('connection tester accepts a draft key without storing or exposing it', async () => {
+  let resolved = 0
+  const tester = createConnectionTester(readerOptions({
+    credentials: { resolve: async () => { resolved += 1; return { value: 'OLD_KEY' } } },
+    fetchImpl: async (url, init) => {
+      assert.equal(url, `${TEST_BASE_URL}/usage`)
+      assert.equal(init.headers.authorization, `Bearer ${TEST_SECRET}`)
+      return new Response(JSON.stringify(QUOTA), { status: 200 })
+    },
+  }))
+  const data = await tester({ baseURL: TEST_BASE_URL, usagePath: 'auto', apiKey: TEST_SECRET })
+  assert.equal(data.remaining, 80)
+  assert.equal(resolved, 0)
+  assert.equal(JSON.stringify(data).includes(TEST_SECRET), false)
+  await assert.rejects(tester({ baseURL: 'http://unsafe.test.invalid', apiKey: TEST_SECRET }), /HTTPS/)
+
+  const reuseTester = createConnectionTester(readerOptions({
+    credentials: { resolve: async () => ({ value: 'OLD_KEY' }) },
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.headers.authorization, 'Bearer OLD_KEY')
+      return new Response(JSON.stringify(QUOTA), { status: 200 })
+    },
+  }))
+  assert.equal((await reuseTester({ baseURL: TEST_BASE_URL, apiKey: '' })).remaining, 80)
+  await assert.rejects(reuseTester({ baseURL: 'https://different.test.invalid/v1', apiKey: '' }), (error) => {
+    assert.equal(error.code, 'api-key-required')
+    assert.equal(error.statusCode, 400)
+    return true
+  })
+})
+
+test('connection saver stages an origin-bound key, fences settings, and cleans inactive keys', async () => {
+  const refs = managedRefs('https://new-relay.test.invalid/v1')
+  let current = { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }
+  const calls = []
+  const settings = {
+    get(ns) { return ns === 'dsh-relay-balance' ? current : undefined },
+    async update(ns, patch, revision) {
+      calls.push(['settings', ns, patch, revision])
+      current = { ...current, ...patch }
+    },
+  }
+  const credentials = {
+    async describe(ref) { calls.push(['describe', ref]); return { configured: false, writable: true } },
+    async set(ref, value) { calls.push(['set', ref, value]) },
+    async unset(ref) { calls.push(['unset', ref]) },
+  }
+  const saved = await createConnectionSaver({
+    settings,
+    credentials,
+    testConnection: async (input) => {
+      calls.push(['test', input.baseURL, input.apiKey])
+      return normalizeSub2ApiUsage(QUOTA, { fetchedAt: FIXED_TIME })
+    },
+  })({ baseURL: 'https://new-relay.test.invalid/v1', apiKey: TEST_SECRET, usagePath: 'auto', expectedRevision: 5 })
+  assert.equal(saved.remaining, 80)
+  assert.equal(current.baseURL, 'https://new-relay.test.invalid/v1')
+  assert.equal(current.credentialRef, refs[0])
+  assert.deepEqual(calls.find((entry) => entry[0] === 'set'), ['set', refs[0], TEST_SECRET])
+  const settingsCall = calls.find((entry) => entry[0] === 'settings')
+  assert.equal(settingsCall[3], 5)
+  assert.equal(settingsCall[2].credentialRef, refs[0])
+  assert.equal(JSON.stringify(saved).includes(TEST_SECRET), false)
+})
+
+test('connection saver rolls back confirmed settings failures without breaking an active key', async () => {
+  const refs = managedRefs(TEST_BASE_URL)
+  const calls = []
+  const current = { baseURL: TEST_BASE_URL, credentialRef: refs[0], usagePath: 'auto' }
+  const saver = createConnectionSaver({
+    settings: {
+      get() { return current },
+      async update() { const error = new Error('conflict'); error.code = 'SETTINGS_CONFLICT'; throw error },
+    },
+    credentials: {
+      async describe() { return { configured: false, writable: true } },
+      async set(ref) { calls.push(['set', ref]) },
+      async unset(ref) { calls.push(['unset', ref]) },
+    },
+    testConnection: async () => normalizeSub2ApiUsage(QUOTA, { fetchedAt: FIXED_TIME }),
+  })
+  await assert.rejects(saver({ baseURL: TEST_BASE_URL, apiKey: 'NEW_KEY', usagePath: 'auto', expectedRevision: 8 }), (error) => error.code === 'settings-conflict')
+  assert.deepEqual(calls, [['set', refs[1]], ['unset', refs[1]]])
+  assert.equal(current.credentialRef, refs[0])
+})
+
+test('connection saver serializes competing saves so a loser cannot overwrite the active slot', async () => {
+  const refs = managedRefs(TEST_BASE_URL)
+  let current = { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }
+  let revision = 0
+  let active = 0
+  let maxActive = 0
+  const values = new Map()
+  const settings = {
+    get() { return current },
+    async update(_ns, patch, expected) {
+      if (expected !== revision) { const error = new Error('conflict'); error.code = 'SETTINGS_CONFLICT'; throw error }
+      current = { ...current, ...patch }
+      revision += 1
+    },
+  }
+  const saver = createConnectionSaver({
+    settings,
+    credentials: {
+      async describe() { return { configured: false, writable: true } },
+      async set(ref, value) { values.set(ref, value) },
+      async unset(ref) { values.delete(ref) },
+    },
+    testConnection: async () => {
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await Promise.resolve()
+      active -= 1
+      return normalizeSub2ApiUsage(QUOTA, { fetchedAt: FIXED_TIME })
+    },
+  })
+  const [first, second] = await Promise.allSettled([
+    saver({ baseURL: TEST_BASE_URL, apiKey: 'FIRST_KEY', usagePath: 'auto', expectedRevision: 0 }),
+    saver({ baseURL: TEST_BASE_URL, apiKey: 'SECOND_KEY', usagePath: 'auto', expectedRevision: 0 }),
+  ])
+  assert.equal(first.status, 'fulfilled')
+  assert.equal(second.status, 'rejected')
+  assert.equal(second.reason.code, 'settings-conflict')
+  assert.equal(maxActive, 1)
+  assert.equal(current.credentialRef, refs[0])
+  assert.equal(values.get(refs[0]), 'FIRST_KEY')
+  assert.equal(values.has(refs[1]), false)
+})
+
+test('connection saver retains staged data when settings outcome is ambiguous', async () => {
+  const refs = managedRefs(TEST_BASE_URL)
+  const values = new Map()
+  const saver = createConnectionSaver({
+    settings: {
+      get() { return { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' } },
+      async update() { throw new Error('listener failed after persistence') },
+    },
+    credentials: {
+      async describe() { return { configured: false, writable: true } },
+      async set(ref, value) { values.set(ref, value) },
+      async unset(ref) { values.delete(ref) },
+    },
+    testConnection: async () => normalizeSub2ApiUsage(QUOTA, { fetchedAt: FIXED_TIME }),
+  })
+  await assert.rejects(saver({ baseURL: TEST_BASE_URL, apiKey: 'STAGED_KEY', usagePath: 'auto', expectedRevision: 3 }), (error) => error.code === 'settings-unavailable')
+  assert.equal(values.get(refs[0]), 'STAGED_KEY')
+})
+
+test('connection test route accepts only direct-loopback same-origin JSON POSTs', async () => {
+  const body = JSON.stringify({ baseURL: TEST_BASE_URL, usagePath: 'auto', apiKey: TEST_SECRET })
+  const request = {
+    method: 'POST',
+    headers: { host: '127.0.0.1:3080', 'content-type': 'application/json', 'content-length': String(Buffer.byteLength(body)) },
+    socket: { remoteAddress: '127.0.0.1', encrypted: false },
+    async *[Symbol.asyncIterator]() { yield Buffer.from(body) },
+  }
+  const response = responseRecorder()
+  await createConnectionTestHandler(async (input) => {
+    assert.equal(input.apiKey, TEST_SECRET)
+    return normalizeSub2ApiUsage(QUOTA, { fetchedAt: FIXED_TIME })
+  })(request, response)
+  assert.equal(response.statusCode, 200)
+  assert.equal(response.body.includes(TEST_SECRET), false)
+
+  const remote = responseRecorder()
+  await createConnectionTestHandler(async () => null)({ ...request, socket: { remoteAddress: '192.0.2.10' } }, remote)
+  assert.equal(remote.statusCode, 403)
+})
+
+test('apply registers settings and all local routes', () => {
+  const registered = []
+  let namespace
+  let settingsOptions
   const ctx = {
-    settings: { get() { return settingsValue() } },
-    credentials: { resolve() {} },
-    webServer: { register(options) { registered = options; return () => {} } },
+    settings: {
+      get(ns) { return ns === 'llm-pi-ai' ? settingsValue() : undefined },
+      register(ns, _schema, options) { namespace = ns; settingsOptions = options; return {} },
+      update() {},
+    },
+    credentials: { resolve() {}, describe() {}, set() {}, unset() {} },
+    webServer: { register(options) { registered.push(options); return () => {} } },
     effect(callback) { return callback() },
   }
   apply(ctx, CONFIG)
-  assert.equal(registered.path, '/relay-balance/status')
-  assert.equal(registered.kind, 'exact')
+  assert.equal(namespace, 'dsh-relay-balance')
+  assert.deepEqual(settingsOptions.base, { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' })
+  assert.doesNotThrow(() => settingsOptions.validate({ baseURL: `${TEST_BASE_URL}/nested`, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }))
+  assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }), /新 API Key/)
+  assert.doesNotThrow(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs('https://different.test.invalid/v1')[0], usagePath: 'auto' }))
+  assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs(TEST_BASE_URL)[0], usagePath: 'auto' }), /插件管理/)
+  assert.deepEqual(registered.map((route) => route.path), ['/relay-balance/status', '/relay-balance/test', '/relay-balance/save'])
+  assert.ok(registered.every((route) => route.kind === 'exact'))
   assert.throws(() => createBalanceReader({ settings: {}, credentials: { resolve() {} } }), /settings\.get/)
-  assert.throws(() => apply({ settings: { get() {} }, credentials: { resolve() {} }, webServer: {} }, CONFIG), /webServer\.register/)
+  assert.throws(() => apply({ settings: { get() {}, register() {}, update() {} }, credentials: { resolve() {}, describe() {}, set() {}, unset() {} }, webServer: {} }, CONFIG), /webServer\.register/)
 })

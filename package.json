@@ -1,19 +1,40 @@
 {
-  "name": "dsh-nbapi-balance",
-  "version": "0.1.0",
-  "private": true,
-  "description": "NBAPI balance indicator for the DSH Web sidebar footer",
+  "name": "dsh-relay-balance",
+  "version": "0.2.0",
+  "description": "DSH Web sidebar balance indicator for Sub2API-compatible relay providers",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "sub2api",
+    "relay",
+    "balance"
+  ],
+  "license": "MIT",
+  "author": "ww2186874-cyber",
+  "packageManager": "pnpm@11.22.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ww2186874-cyber/dsh-relay-balance.git"
+  },
+  "homepage": "https://github.com/ww2186874-cyber/dsh-relay-balance#readme",
+  "bugs": {
+    "url": "https://github.com/ww2186874-cyber/dsh-relay-balance/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/index.js",
     "lib/client.js",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -30,11 +51,19 @@
   "scripts": {
     "test": "node --test tests/*.test.js",
     "bundle": "node scripts/build-client.js",
-    "check": "node --check lib/index.js && node --check src/client-module.js && node --check lib/client.js && node --check scripts/build-client.js",
-    "verify": "pnpm run bundle && pnpm run check && pnpm run test"
+    "bundle:check": "node scripts/check-client.js",
+    "check": "node --check lib/index.js && node --check src/client-module.js && node --check lib/client.js && node --check scripts/build-client.js && node --check scripts/check-client.js",
+    "verify": "pnpm run bundle:check && pnpm run check && pnpm run test",
+    "prepack": "pnpm run verify"
   },
   "engines": {
     "node": ">=22.19.0",
-    "dsh": ">=0.1.0-rc.7"
+    "dsh": ">=0.1.0-rc.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
   }
 }

@@ -1,4 +1,10 @@
-# Permanent host + browser balance indicator for the configured NB Codex relay.
+# Relay quota indicator. Override this row's complete config in the Profile patch
+# when the Sub2API-compatible provider is not named `sub2api`.
 - insert:
-    - id: nbapi-balance
-      name: 'dsh-nbapi-balance'
+    - id: relay-balance
+      name: 'dsh-relay-balance'
+      config:
+        providerId: sub2api
+        displayName: Relay
+        usagePath: auto
+        allowRemote: false

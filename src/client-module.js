@@ -1,9 +1,12 @@
 const React = require('react')
 
-const ROUTE_PATH = '/nbapi-balance/status'
+const ROUTE_PATH = '/relay-balance/status'
 const REFRESH_MS = 60_000
+const CLIENT_TIMEOUT_MS = 20_000
 
-function toneOf(percent) {
+function toneOf(percent, mode) {
+  if (mode === 'unlimited') return 'healthy'
+  if (!Number.isFinite(percent)) return 'neutral'
   if (percent < 10) return 'danger'
   if (percent <= 30) return 'warning'
   return 'healthy'
@@ -14,19 +17,66 @@ function money(value, unit) {
   return unit === 'USD' ? `$${value.toFixed(2)}` : `${value.toFixed(2)} ${unit}`
 }
 
+function compactMoney(value, unit) {
+  if (!Number.isFinite(value)) return '∞'
+  const prefix = unit === 'USD' ? '$' : ''
+  if (value >= 1000) return `${prefix}${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`
+  if (value >= 100) return `${prefix}${Math.round(value)}`
+  return `${prefix}${value.toFixed(value >= 10 ? 0 : 1)}`
+}
+
 function percentText(value) {
   return Number.isFinite(value) ? `${value.toFixed(1)}%` : '—'
 }
 
-function createBalanceRequestManager({ fetchImpl, createController, onLoading, onSuccess, onError }) {
+function scopeLabel(data) {
+  if (data.mode === 'wallet') return '钱包余额'
+  if (data.mode === 'unlimited') return '不限额'
+  const scopes = {
+    total: 'Key 配额',
+    '5h': '5 小时额度',
+    '1d': '日额度',
+    '7d': '7 日额度',
+    daily: '日额度',
+    weekly: '周额度',
+    monthly: '月额度',
+    window: '窗口额度',
+  }
+  return scopes[data.scope] || '可用额度'
+}
+
+function amountText(data) {
+  const scope = scopeLabel(data)
+  if (data.mode === 'wallet') {
+    return `${scope} ${money(data.remaining, data.unit)}${Number.isFinite(data.spent) ? ` · 当前 Key 累计消费 ${money(data.spent, data.unit)}` : ''}`
+  }
+  if (data.mode === 'unlimited') {
+    return `${scope}${Number.isFinite(data.spent) ? ` · 当前 Key 累计消费 ${money(data.spent, data.unit)}` : ''}`
+  }
+  return `${scope} · 剩余 ${money(data.remaining, data.unit)} / 限额 ${money(data.total, data.unit)}`
+}
+
+function createBalanceRequestManager({
+  fetchImpl,
+  createController,
+  setTimeoutImpl,
+  clearTimeoutImpl,
+  onLoading,
+  onSuccess,
+  onError,
+}) {
   let current = null
 
   function refresh() {
     if (current !== null) return current.promise
 
     const controller = createController()
-    const record = { controller, promise: null }
+    const record = { controller, promise: null, timer: null, timedOut: false }
     onLoading()
+    record.timer = setTimeoutImpl(() => {
+      record.timedOut = true
+      controller.abort()
+    }, CLIENT_TIMEOUT_MS)
     record.promise = Promise.resolve()
       .then(() => fetchImpl(ROUTE_PATH, {
         method: 'GET',
@@ -37,8 +87,9 @@ function createBalanceRequestManager({ fetchImpl, createController, onLoading, o
       }))
       .then(async (response) => {
         const body = await response.json().catch(() => null)
+        if (record.timedOut) throw new Error('client-timeout')
         if (!response.ok || body?.ok !== true || typeof body.data !== 'object' || body.data === null) {
-          throw new Error(body?.error?.message || `余额查询失败（HTTP ${response.status}）`)
+          throw new Error(body?.error?.message || `额度查询失败（HTTP ${response.status}）`)
         }
         return body.data
       })
@@ -47,10 +98,12 @@ function createBalanceRequestManager({ fetchImpl, createController, onLoading, o
         return data
       })
       .catch((error) => {
-        if (!controller.signal.aborted) onError(error?.message || '余额查询失败')
+        if (record.timedOut) onError('中转额度查询超时')
+        else if (!controller.signal.aborted) onError(error?.message || '中转额度查询失败')
         return null
       })
       .finally(() => {
+        clearTimeoutImpl(record.timer)
         if (current === record) current = null
       })
     current = record
@@ -61,6 +114,7 @@ function createBalanceRequestManager({ fetchImpl, createController, onLoading, o
     const record = current
     if (record === null) return
     current = null
+    clearTimeoutImpl(record.timer)
     record.controller.abort()
   }
 
@@ -92,6 +146,8 @@ function BalanceIndicator({ wide }) {
     manager.current = createBalanceRequestManager({
       fetchImpl: (...args) => fetch(...args),
       createController: () => new AbortController(),
+      setTimeoutImpl: (...args) => window.setTimeout(...args),
+      clearTimeoutImpl: (id) => window.clearTimeout(id),
       onLoading: () => {
         if (mounted.current) setState((previous) => ({ ...previous, loading: true }))
       },
@@ -105,7 +161,6 @@ function BalanceIndicator({ wide }) {
   }
 
   const refresh = React.useCallback(() => manager.current.refresh(), [])
-
   React.useEffect(() => {
     mounted.current = true
     const dispose = installRefreshLifecycle(manager.current, window, document)
@@ -118,85 +173,93 @@ function BalanceIndicator({ wide }) {
   const data = state.data
   const percent = typeof data?.percent === 'number' && Number.isFinite(data.percent)
     ? Math.min(100, Math.max(0, data.percent))
-    : 0
-  const tone = data === null ? 'unavailable' : toneOf(percent)
+    : null
+  const tone = data === null ? 'unavailable' : toneOf(percent, data.mode)
   const stale = data !== null && state.error !== null
+  const displayName = data?.displayName || 'Relay'
+  const summary = data === null ? '' : amountText(data)
   const title = data === null
-    ? (state.loading ? '正在查询 NBAPI 余额' : `NBAPI 余额不可用：${state.error || '未知错误'}。点击重试`)
-    : `${data.planName ? `${data.planName} · ` : ''}剩余 ${money(data.remaining, data.unit)} / 总额 ${money(data.total, data.unit)}（${percentText(percent)}）${stale ? ` · 数据可能已过期：${state.error}` : ''}。点击刷新`
+    ? (state.loading ? '正在查询中转额度' : `中转额度不可用：${state.error || '未知错误'}。点击重试`)
+    : `${data.planName ? `${data.planName} · ` : ''}${summary}${Number.isFinite(percent) ? `（${percentText(percent)}）` : ''}${stale ? ` · 数据可能已过期：${state.error}` : ''}。点击刷新`
   const label = data === null
-    ? (state.loading ? 'NBAPI 查询中' : 'NBAPI 余额不可用')
-    : `NBAPI 剩余 ${money(data.remaining, data.unit)}，总额 ${money(data.total, data.unit)}，${percentText(percent)}${stale ? '，数据可能已过期' : ''}`
+    ? (state.loading ? '中转额度查询中' : '中转额度不可用')
+    : `${displayName}，${summary}${Number.isFinite(percent) ? `，剩余 ${percentText(percent)}` : ''}${stale ? '，数据可能已过期' : ''}`
 
   if (!wide) {
+    const compact = data === null
+      ? (state.loading ? '…' : '!')
+      : (Number.isFinite(percent) ? String(Math.round(percent)) : compactMoney(data.remaining, data.unit))
     return React.createElement('button', {
       type: 'button',
-      className: `nbapi-balance nbapi-balance--rail nbapi-balance--${tone}${state.loading ? ' is-loading' : ''}`,
+      className: `relay-balance relay-balance--rail relay-balance--${tone}${state.loading ? ' is-loading' : ''}${Number.isFinite(percent) ? ' has-percent' : ''}`,
       title,
       'aria-label': label,
       onClick: refresh,
     },
     React.createElement('span', {
-      className: 'nbapi-balance__ring',
-      style: { '--nbapi-progress': `${percent * 3.6}deg` },
+      className: 'relay-balance__ring',
+      style: { '--relay-progress': `${Number.isFinite(percent) ? percent * 3.6 : 0}deg` },
       'aria-hidden': 'true',
-    }, data === null ? (state.loading ? '…' : '!') : String(Math.round(percent))),
-    stale ? React.createElement('span', { className: 'nbapi-balance__warning', 'aria-hidden': 'true' }, '!') : null)
+    }, compact),
+    stale ? React.createElement('span', { className: 'relay-balance__warning', 'aria-hidden': 'true' }, '!') : null)
   }
 
   return React.createElement('button', {
     type: 'button',
-    className: `nbapi-balance nbapi-balance--wide nbapi-balance--${tone}${state.loading ? ' is-loading' : ''}`,
+    className: `relay-balance relay-balance--wide relay-balance--${tone}${state.loading ? ' is-loading' : ''}`,
     title,
     'aria-label': label,
     onClick: refresh,
   },
-  React.createElement('span', { className: 'nbapi-balance__header' },
-    React.createElement('span', { className: 'nbapi-balance__name' }, 'NBAPI'),
-    React.createElement('span', { className: 'nbapi-balance__percent' }, data === null ? (state.loading ? '查询中…' : '不可用') : percentText(percent)),
-    stale ? React.createElement('span', { className: 'nbapi-balance__stale', 'aria-hidden': 'true' }, '!') : null),
-  React.createElement('span', { className: 'nbapi-balance__amount' }, data === null
-    ? (state.error || '正在读取余额')
-    : `剩余 ${money(data.remaining, data.unit)} / 总额 ${money(data.total, data.unit)}`),
-  React.createElement('span', { className: 'nbapi-balance__track', 'aria-hidden': 'true' },
-    React.createElement('span', { className: 'nbapi-balance__fill', style: { width: `${percent}%` } })))
+  React.createElement('span', { className: 'relay-balance__header' },
+    React.createElement('span', { className: 'relay-balance__name' }, displayName),
+    React.createElement('span', { className: 'relay-balance__percent' }, data === null
+      ? (state.loading ? '查询中…' : '不可用')
+      : (Number.isFinite(percent) ? percentText(percent) : scopeLabel(data))),
+    stale ? React.createElement('span', { className: 'relay-balance__stale', 'aria-hidden': 'true' }, '!') : null),
+  React.createElement('span', { className: 'relay-balance__amount' }, data === null ? (state.error || '正在读取额度') : summary),
+  Number.isFinite(percent)
+    ? React.createElement('span', { className: 'relay-balance__track', 'aria-hidden': 'true' },
+      React.createElement('span', { className: 'relay-balance__fill', style: { width: `${percent}%` } }))
+    : null)
 }
 
 const css = `
-.nbapi-balance{--nbapi-tone:var(--dsw-alias-state-business-primary,#3b82f6);box-sizing:border-box;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;border:1px solid transparent;background:transparent;position:relative;transition:background .16s ease,border-color .16s ease,opacity .16s ease}
-.nbapi-balance:hover{background:var(--dsw-alias-interactive-bg-hover)}
-.nbapi-balance:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
-.nbapi-balance--healthy{--nbapi-tone:#22a06b}.nbapi-balance--warning{--nbapi-tone:#d49b16}.nbapi-balance--danger{--nbapi-tone:#df4b4b}.nbapi-balance--unavailable{--nbapi-tone:var(--dsw-alias-label-caption,#8a8a8a)}
-.nbapi-balance.is-loading{opacity:.78}
-.nbapi-balance--wide{width:100%;min-width:100%;flex:0 0 100%;border-color:var(--dsw-alias-border-l1);border-radius:9px;padding:7px 9px 8px;text-align:left;display:flex;flex-direction:column;gap:4px;align-self:center}
-:where(*):has(> [data-slot="sidebar.footer.action"] > .nbapi-balance--wide){flex-wrap:wrap;row-gap:4px}
-:where(*):has(> [data-slot="sidebar.footer.action"] > .nbapi-balance--rail){flex-direction:column;align-items:center;row-gap:4px}
-.nbapi-balance__header{width:100%;display:flex;align-items:center;gap:6px;line-height:16px}.nbapi-balance__name{font-size:12px;font-weight:650;letter-spacing:.02em}.nbapi-balance__percent{margin-left:auto;color:var(--nbapi-tone);font-size:11px;font-variant-numeric:tabular-nums}.nbapi-balance__stale,.nbapi-balance__warning{color:#d49b16;font-weight:800}
-.nbapi-balance__amount{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:15px;font-variant-numeric:tabular-nums}
-.nbapi-balance__track{width:100%;height:4px;overflow:hidden;border-radius:999px;background:var(--dsw-alias-bg-base)}.nbapi-balance__fill{height:100%;display:block;border-radius:inherit;background:var(--nbapi-tone);transition:width .3s ease}
-.nbapi-balance--rail{width:36px;height:36px;padding:4px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center}
-.nbapi-balance__ring{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-primary);font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;background:radial-gradient(circle at center,var(--dsw-specific-sidebar-fill) 58%,transparent 60%),conic-gradient(var(--nbapi-tone) var(--nbapi-progress),var(--dsw-alias-border-l1) 0)}
-.nbapi-balance__warning{position:absolute;right:1px;top:0;width:12px;height:12px;border-radius:50%;background:var(--dsw-specific-sidebar-fill);font-size:9px;line-height:12px;text-align:center}
-@media (prefers-reduced-motion:reduce){.nbapi-balance,.nbapi-balance__fill{transition:none}}
+.relay-balance{--relay-tone:var(--dsw-alias-state-business-primary,#3b82f6);box-sizing:border-box;color:var(--dsw-alias-label-primary);font:inherit;cursor:pointer;border:1px solid transparent;background:transparent;position:relative;transition:background .16s ease,border-color .16s ease,opacity .16s ease}
+.relay-balance:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.relay-balance:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px}
+.relay-balance--healthy{--relay-tone:#22a06b}.relay-balance--warning{--relay-tone:#d49b16}.relay-balance--danger{--relay-tone:#df4b4b}.relay-balance--neutral{--relay-tone:var(--dsw-alias-state-business-primary,#3b82f6)}.relay-balance--unavailable{--relay-tone:var(--dsw-alias-label-caption,#8a8a8a)}
+.relay-balance.is-loading{opacity:.78}
+.relay-balance--wide{width:100%;min-width:100%;flex:0 0 100%;border-color:var(--dsw-alias-border-l1);border-radius:9px;padding:7px 9px 8px;text-align:left;display:flex;flex-direction:column;gap:4px;align-self:center}
+:where(*):has(> [data-slot="sidebar.footer.action"] > .relay-balance--wide){flex-wrap:wrap;row-gap:4px}
+:where(*):has(> [data-slot="sidebar.footer.action"] > .relay-balance--rail){flex-direction:column;align-items:center;row-gap:4px}
+.relay-balance__header{width:100%;display:flex;align-items:center;gap:6px;line-height:16px}.relay-balance__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:650;letter-spacing:.02em}.relay-balance__percent{margin-left:auto;flex:none;color:var(--relay-tone);font-size:11px;font-variant-numeric:tabular-nums}.relay-balance__stale,.relay-balance__warning{color:#d49b16;font-weight:800}
+.relay-balance__amount{width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:15px;font-variant-numeric:tabular-nums}
+.relay-balance__track{width:100%;height:4px;overflow:hidden;border-radius:999px;background:var(--dsw-alias-bg-base)}.relay-balance__fill{height:100%;display:block;border-radius:inherit;background:var(--relay-tone);transition:width .3s ease}
+.relay-balance--rail{width:36px;height:36px;padding:4px;border-radius:9px;display:inline-flex;align-items:center;justify-content:center}
+.relay-balance__ring{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-primary);font-size:8px;font-weight:700;font-variant-numeric:tabular-nums;background:radial-gradient(circle at center,var(--dsw-specific-sidebar-fill) 58%,transparent 60%),conic-gradient(var(--relay-tone) 0deg,var(--dsw-alias-border-l1) 0)}
+.relay-balance.has-percent .relay-balance__ring{background:radial-gradient(circle at center,var(--dsw-specific-sidebar-fill) 58%,transparent 60%),conic-gradient(var(--relay-tone) var(--relay-progress),var(--dsw-alias-border-l1) 0)}
+.relay-balance__warning{position:absolute;right:1px;top:0;width:12px;height:12px;border-radius:50%;background:var(--dsw-specific-sidebar-fill);font-size:9px;line-height:12px;text-align:center}
+@media (prefers-reduced-motion:reduce){.relay-balance,.relay-balance__fill{transition:none}}
 `
 
 const inject = ['slots']
 function apply(ctx) {
   if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') {
-    throw new Error('dsh-nbapi-balance requires slots.inject() and slots.register()')
+    throw new Error('dsh-relay-balance requires slots.inject() and slots.register()')
   }
   ctx.effect(() => {
     const tag = document.createElement('style')
-    tag.dataset.plugin = 'dsh-nbapi-balance'
+    tag.dataset.plugin = 'dsh-relay-balance'
     tag.textContent = css
     document.head.appendChild(tag)
     return () => tag.remove()
-  }, 'nbapi-balance: styles')
+  }, 'relay-balance: styles')
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
-    id: 'nbapi-balance',
+    id: 'relay-balance',
     order: -100,
-    label: 'NBAPI 余额',
+    label: '中转额度',
   }, BalanceIndicator))
 }
 
@@ -207,3 +270,5 @@ exports.createBalanceRequestManager = createBalanceRequestManager
 exports.installRefreshLifecycle = installRefreshLifecycle
 exports.toneOf = toneOf
 exports.money = money
+exports.amountText = amountText
+exports.scopeLabel = scopeLabel

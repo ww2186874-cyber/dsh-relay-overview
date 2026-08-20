@@ -26,7 +26,7 @@ function evaluateBundle() {
     window: {
       __ModuleLoader__: {
         load(definition) {
-          assert.equal(definition.id, 'dsh-nbapi-balance')
+          assert.equal(definition.id, 'dsh-relay-balance')
           factory = definition.factory
         },
       },
@@ -39,6 +39,28 @@ function evaluateBundle() {
   })
 }
 
+function timerHarness() {
+  const timers = new Map()
+  let nextId = 1
+  return {
+    set(callback, delay) {
+      const id = nextId++
+      timers.set(id, { callback, delay })
+      return id
+    },
+    clear(id) { timers.delete(id) },
+    fireFirst() {
+      const entry = timers.entries().next().value
+      assert.ok(entry)
+      const [id, timer] = entry
+      timers.delete(id)
+      timer.callback()
+      return timer.delay
+    },
+    count() { return timers.size },
+  }
+}
+
 const clientExports = evaluateSource()
 
 test('generated client artifact exactly matches the source-of-truth build rule', () => {
@@ -46,34 +68,36 @@ test('generated client artifact exactly matches the source-of-truth build rule',
   assert.equal(built.includes('\r'), false)
 })
 
-test('actual generated bundle exports the approved helpers', () => {
-  const bundledExports = evaluateBundle()
-  assert.equal(bundledExports.toneOf(9.99), 'danger')
-  assert.equal(bundledExports.toneOf(10), 'warning')
-  assert.equal(bundledExports.toneOf(30), 'warning')
-  assert.equal(bundledExports.toneOf(30.01), 'healthy')
-  assert.equal(bundledExports.money(12.345, 'USD'), '$12.35')
-  assert.equal(typeof bundledExports.createBalanceRequestManager, 'function')
+test('actual generated bundle exports generic Relay helpers', () => {
+  const bundled = evaluateBundle()
+  assert.equal(bundled.toneOf(9.99, 'quota'), 'danger')
+  assert.equal(bundled.toneOf(10, 'quota'), 'warning')
+  assert.equal(bundled.toneOf(30.01, 'quota'), 'healthy')
+  assert.equal(bundled.toneOf(null, 'wallet'), 'neutral')
+  assert.equal(bundled.money(12.345, 'USD'), '$12.35')
+  assert.equal(typeof bundled.createBalanceRequestManager, 'function')
 })
 
-test('client request manager deduplicates refreshes and aborts without a false error', async () => {
+test('request manager deduplicates refreshes and aborts cleanup without a false error', async () => {
   const requests = []
-  const loading = []
   const successes = []
   const errors = []
+  const loading = []
+  const timers = timerHarness()
   const manager = clientExports.createBalanceRequestManager({
     fetchImpl(_url, init) {
       return new Promise((resolve, reject) => {
-        const request = { init, resolve, reject }
-        requests.push(request)
+        requests.push({ init, resolve, reject })
         init.signal.addEventListener('abort', () => {
-          const error = new Error('aborted request must stay hidden')
+          const error = new Error('hidden cancellation')
           error.name = 'AbortError'
           reject(error)
         }, { once: true })
       })
     },
     createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
     onLoading: () => loading.push(true),
     onSuccess: (data) => successes.push(data),
     onError: (message) => errors.push(message),
@@ -86,6 +110,7 @@ test('client request manager deduplicates refreshes and aborts without a false e
   assert.equal(requests.length, 1)
   assert.equal(requests[0].init.credentials, 'same-origin')
   assert.equal(requests[0].init.signal.aborted, false)
+  assert.equal(timers.count(), 1)
 
   manager.abort()
   assert.equal(requests[0].init.signal.aborted, true)
@@ -96,19 +121,84 @@ test('client request manager deduplicates refreshes and aborts without a false e
   assert.equal(await first, null)
   assert.deepEqual(errors, [])
 
-  assert.equal(manager.refresh(), second, 'an older request must not clear the newer record')
-  const data = { remaining: 1, total: 2, percent: 50, unit: 'USD' }
+  assert.equal(manager.refresh(), second, 'an older request must not clear a newer record')
+  const data = { mode: 'quota', remaining: 1, total: 2, percent: 50, unit: 'USD' }
   requests[1].resolve({ ok: true, status: 200, json: async () => ({ ok: true, data }) })
   assert.deepEqual(await second, data)
   assert.deepEqual(successes, [data])
   assert.equal(loading.length, 2)
+  assert.equal(timers.count(), 0)
 })
 
-test('client request manager reports genuine network failures', async () => {
+test('client timeout aborts a hung request, reports it, and permits retry', async () => {
+  const requests = []
   const errors = []
+  const timers = timerHarness()
+  const manager = clientExports.createBalanceRequestManager({
+    fetchImpl(_url, init) {
+      return new Promise((_resolve, reject) => {
+        requests.push(init)
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          reject(error)
+        }, { once: true })
+      })
+    },
+    createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
+    onLoading() {},
+    onSuccess() {},
+    onError: (message) => errors.push(message),
+  })
+  const first = manager.refresh()
+  await Promise.resolve()
+  assert.equal(timers.fireFirst(), 20_000)
+  assert.equal(await first, null)
+  assert.equal(requests[0].signal.aborted, true)
+  assert.deepEqual(errors, ['中转额度查询超时'])
+
+  const second = manager.refresh()
+  await Promise.resolve()
+  assert.notEqual(second, first)
+  assert.equal(requests.length, 2)
+  manager.abort()
+  await second
+  assert.deepEqual(errors, ['中转额度查询超时'])
+})
+
+test('timeout stays authoritative when a fetch implementation ignores abort and returns late', async () => {
+  let resolveFetch
+  const errors = []
+  const successes = []
+  const timers = timerHarness()
+  const manager = clientExports.createBalanceRequestManager({
+    fetchImpl: async () => new Promise((resolve) => { resolveFetch = resolve }),
+    createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
+    onLoading() {},
+    onSuccess: (data) => successes.push(data),
+    onError: (message) => errors.push(message),
+  })
+  const operation = manager.refresh()
+  await Promise.resolve()
+  timers.fireFirst()
+  resolveFetch({ ok: true, status: 200, json: async () => ({ ok: true, data: { mode: 'wallet', remaining: 1 } }) })
+  assert.equal(await operation, null)
+  assert.deepEqual(successes, [])
+  assert.deepEqual(errors, ['中转额度查询超时'])
+})
+
+test('request manager reports genuine local route failures', async () => {
+  const errors = []
+  const timers = timerHarness()
   const manager = clientExports.createBalanceRequestManager({
     fetchImpl: async () => { throw new Error('visible network failure') },
     createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
     onLoading() {},
     onSuccess() {},
     onError: (message) => errors.push(message),
@@ -125,10 +215,7 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   let cleared
   let visibilityHandler
   let removedHandler
-  const manager = {
-    refresh() { refreshes += 1 },
-    abort() { aborts += 1 },
-  }
+  const manager = { refresh() { refreshes += 1 }, abort() { aborts += 1 } }
   const windowObject = {
     setInterval(callback, delay) { intervalCallback = callback; intervalDelay = delay; return 42 },
     clearInterval(id) { cleared = id },
@@ -149,82 +236,128 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   intervalCallback()
   visibilityHandler()
   assert.equal(refreshes, 3)
-
   dispose()
   assert.equal(cleared, 42)
   assert.equal(removedHandler, visibilityHandler)
   assert.equal(aborts, 1)
 })
 
-test('BalanceIndicator renders distinct wide and rail structures and stale data', () => {
-  function render(state, wide) {
-    const react = {
-      useState: () => [state, () => {}],
-      useRef: (value) => ({ current: value }),
-      useCallback: (callback) => callback,
-      useEffect() {},
-      createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
-    }
-    return evaluateSource(react).BalanceIndicator({ wide })
+function renderIndicator(state, wide) {
+  const react = {
+    useState: () => [state, () => {}],
+    useRef: (value) => ({ current: value }),
+    useCallback: (callback) => callback,
+    useEffect() {},
+    createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
   }
+  return evaluateSource(react).BalanceIndicator({ wide })
+}
 
-  const staleState = {
-    data: { remaining: 40, total: 100, percent: 40, unit: 'USD', planName: '测试套餐' },
+test('quota rendering uses a percentage while wallet rendering does not invent one', () => {
+  const quotaState = {
+    data: { displayName: 'My Relay', mode: 'quota', scope: 'total', remaining: 40, total: 100, spent: 60, percent: 40, unit: 'USD', planName: '' },
     loading: false,
     error: 'temporary failure',
   }
-  const wide = render(staleState, true)
-  const rail = render(staleState, false)
-  assert.match(wide.props.className, /nbapi-balance--wide/)
-  assert.match(rail.props.className, /nbapi-balance--rail/)
-  assert.equal(typeof wide.props.onClick, 'function')
-  assert.equal(typeof rail.props.onClick, 'function')
-  assert.match(wide.props.title, /数据可能已过期/)
-  assert.match(wide.children[1].children[0], /剩余 \$40\.00 \/ 总额 \$100\.00/)
-  assert.equal(rail.children[0].children[0], '40')
-  assert.match(wide.children[0].children[2].props.className, /stale/)
+  const walletState = {
+    data: { displayName: 'My Relay', mode: 'wallet', scope: null, remaining: 40, total: null, spent: 12, percent: null, unit: 'USD', planName: '' },
+    loading: false,
+    error: null,
+  }
+  const quotaWide = renderIndicator(quotaState, true)
+  const quotaRail = renderIndicator(quotaState, false)
+  const walletWide = renderIndicator(walletState, true)
+  const walletRail = renderIndicator(walletState, false)
+
+  assert.match(quotaWide.props.className, /relay-balance--wide/)
+  assert.match(quotaRail.props.className, /has-percent/)
+  assert.equal(quotaRail.children[0].children[0], '40')
+  assert.match(quotaWide.children[1].children[0], /剩余 \$40\.00 \/ 限额 \$100\.00/)
+  assert.match(quotaWide.props.title, /数据可能已过期/)
+
+  assert.doesNotMatch(walletRail.props.className, /has-percent/)
+  assert.equal(walletRail.children[0].children[0], '$40')
+  assert.match(walletWide.children[1].children[0], /钱包余额 \$40\.00 · 当前 Key 累计消费 \$12\.00/)
+  assert.equal(walletWide.children[2], null)
 })
 
-test('client source preserves refresh, stale-data, cleanup, Slot, and wide behavior', () => {
-  assert.match(source, /60_000/)
+test('unlimited rendering is explicit and remains accessible', () => {
+  const state = {
+    data: { displayName: 'Relay', mode: 'unlimited', scope: null, remaining: null, total: null, spent: 5, percent: null, unit: 'USD', planName: 'Pro' },
+    loading: false,
+    error: null,
+  }
+  const wide = renderIndicator(state, true)
+  const rail = renderIndicator(state, false)
+  assert.match(wide.children[1].children[0], /不限额/)
+  assert.equal(rail.children[0].children[0], '∞')
+  assert.match(wide.props['aria-label'], /不限额/)
+})
+
+test('client source preserves lifecycle, generic Slot identity, and rc8 layout compatibility', () => {
+  assert.match(source, /CLIENT_TIMEOUT_MS = 20_000/)
   assert.match(source, /visibilitychange/)
-  assert.match(source, /installRefreshLifecycle\(manager\.current, window, document\)/)
   assert.match(source, /manager\.abort\(\)/)
-  assert.match(source, /new AbortController\(\)/)
   assert.match(source, /current === record/)
-  assert.match(source, /if \(!controller\.signal\.aborted\) onError/)
-  assert.match(source, /previous\) => \(\{ \.\.\.previous, loading: false, error: message \}\)/)
   assert.match(source, /ctx\.slots\.inject\('sidebar\.footer\.action'/)
   assert.match(source, /function BalanceIndicator\(\{ wide \}\)/)
-  assert.match(source, /if \(!wide\)/)
-  assert.match(source, /conic-gradient/)
-  assert.match(source, /flex:0 0 100%/)
-  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.nbapi-balance--wide\)\{flex-wrap:wrap/)
-  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.nbapi-balance--rail\)\{flex-direction:column;align-items:center/)
-  assert.equal(/hHd-Xa_|_[A-Za-z0-9]{5,}_/.test(source), false)
+  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-balance--wide\)/)
+  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-balance--rail\)/)
+  assert.equal(source.includes('nbapi'), false)
+  assert.equal(source.includes('NBAPI'), false)
+  assert.equal(source.includes('hHd-Xa_'), false)
 })
 
 test('client contains no credential metadata or direct upstream access', () => {
   for (const text of [source, built]) {
     assert.equal(text.includes('TEST_ONLY_SECRET_DO_NOT_USE'), false)
-    assert.equal(text.includes('TEST_ONLY_CREDENTIAL_REF'), false)
     assert.equal(text.includes('apiKeyEnv'), false)
     assert.equal(text.includes('authorization'), false)
     assert.equal(text.includes('Bearer '), false)
     assert.equal(/https:\/\//i.test(text), false)
-    assert.match(text, /\/nbapi-balance\/status/)
+    assert.match(text, /\/relay-balance\/status/)
   }
 })
 
-test('Client compatibility check clearly rejects an incomplete slots service', () => {
-  assert.throws(() => clientExports.apply({ slots: {}, effect() {} }), /slots\.inject.*slots\.register/)
+test('Client apply owns its style and registers the generic public Slot entry', () => {
+  const appended = []
+  const removed = []
+  const documentObject = {
+    createElement(type) {
+      assert.equal(type, 'style')
+      return { dataset: {}, textContent: '', remove() { removed.push(this) } }
+    },
+    head: { appendChild(node) { appended.push(node) } },
+  }
+  let styleDispose
+  let injectedName
+  let injectedFactory
+  let registration
+  let component
+  const client = evaluateSource({}, { document: documentObject })
+  client.apply({
+    effect(factory, description) {
+      assert.equal(description, 'relay-balance: styles')
+      styleDispose = factory()
+    },
+    slots: {
+      inject(name, factory) { injectedName = name; injectedFactory = factory },
+      register(options, value) { registration = options; component = value; return () => {} },
+    },
+  })
+  assert.equal(appended.length, 1)
+  assert.equal(appended[0].dataset.plugin, 'dsh-relay-balance')
+  assert.match(appended[0].textContent, /\.relay-balance/)
+  assert.equal(injectedName, 'sidebar.footer.action')
+  injectedFactory()
+  assert.equal(registration.id, 'relay-balance')
+  assert.equal(registration.name, 'sidebar.footer.action')
+  assert.equal(registration.label, '中转额度')
+  assert.equal(component, client.BalanceIndicator)
+  styleDispose()
+  assert.deepEqual(removed, appended)
 })
 
-test('real client helpers match the approved threshold and amount policy', () => {
-  assert.equal(clientExports.toneOf(9.99), 'danger')
-  assert.equal(clientExports.toneOf(10), 'warning')
-  assert.equal(clientExports.toneOf(30), 'warning')
-  assert.equal(clientExports.toneOf(30.01), 'healthy')
-  assert.equal(clientExports.money(12.345, 'USD'), '$12.35')
-  assert.equal(clientExports.money(12.5, 'CNY'), '12.50 CNY')
+test('Client compatibility check rejects an incomplete slots service', () => {
+  assert.throws(() => clientExports.apply({ slots: {}, effect() {} }), /slots\.inject.*slots\.register/)
 })

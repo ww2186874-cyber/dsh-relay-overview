@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --ignore-workspace --frozen-lockfile
+      - run: pnpm verify
+      - name: Pack and smoke-test the published surface
+        shell: bash
+        run: |
+          tarball="$(npm pack --silent | tail -n 1)"
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir" "$tarball"' EXIT
+          npm init -y --prefix "$temp_dir" >/dev/null
+          npm install --ignore-scripts --prefix "$temp_dir" "$PWD/$tarball" >/dev/null
+          cd "$temp_dir"
+          node --input-type=module -e "
+            import { createRequire } from 'node:module'
+            const require = createRequire(import.meta.url)
+            const plugin = await import('dsh-relay-balance')
+            if (plugin.name !== 'dsh-relay-balance' || typeof plugin.apply !== 'function' || !plugin.Config) process.exit(1)
+            for (const path of ['dsh-relay-balance/client', 'dsh-relay-balance/cordis.patch.yml', 'dsh-relay-balance/package.json']) require.resolve(path)
+          "

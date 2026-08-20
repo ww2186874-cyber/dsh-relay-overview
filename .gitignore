@@ -4,6 +4,8 @@ coverage/
 *.log
 *.tmp
 *.bak
+*.tgz
+.pnpm-store/
 .DS_Store
 Thumbs.db
 .env

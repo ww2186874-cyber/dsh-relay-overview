@@ -1,0 +1,40 @@
+{
+  "name": "dsh-nbapi-balance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NBAPI balance indicator for the DSH Web sidebar footer",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "bundle": "node scripts/build-client.js",
+    "check": "node --check lib/index.js && node --check src/client-module.js && node --check lib/client.js && node --check scripts/build-client.js",
+    "verify": "pnpm run bundle && pnpm run check && pnpm run test"
+  },
+  "engines": {
+    "node": ">=22.19.0",
+    "dsh": ">=0.1.0-rc.7"
+  }
+}

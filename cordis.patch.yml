@@ -1,0 +1,4 @@
+# Permanent host + browser balance indicator for the configured NB Codex relay.
+- insert:
+    - id: nbapi-balance
+      name: 'dsh-nbapi-balance'

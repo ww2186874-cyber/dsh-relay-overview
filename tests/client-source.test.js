@@ -270,6 +270,24 @@ test('subscription timing text contains only expiry and reset information', () =
   assert.equal(clientExports.balanceTimingText({ mode: 'subscription', expiresAt: null, resetAt: null }, now), null)
 })
 
+test('timing tooltip prefers the card right and remains inside the viewport', () => {
+  const beside = clientExports.timingTooltipPosition(
+    { right: 268, top: 378, height: 50 },
+    { width: 280, height: 33 },
+    { width: 748, height: 484 },
+  )
+  assert.equal(beside.left, 276)
+  assert.equal(beside.top, 386.5)
+
+  const clamped = clientExports.timingTooltipPosition(
+    { right: 730, top: 470, height: 30 },
+    { width: 280, height: 33 },
+    { width: 748, height: 484 },
+  )
+  assert.equal(clamped.left, 460)
+  assert.equal(clamped.top, 443)
+})
+
 test('quota rendering uses a percentage while wallet rendering does not invent one', () => {
   const quotaState = {
     data: { displayName: 'My Relay', mode: 'quota', scope: 'total', remaining: 40, total: 100, spent: 60, percent: 40, unit: 'USD', planName: '' },
@@ -304,7 +322,7 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.equal(walletWide.children[1], null)
 })
 
-test('expanded subscription exposes an immediate timing tooltip across the card', () => {
+test('expanded subscription portals a larger timing tooltip to the card right', () => {
   const now = Date.parse('2026-08-22T19:44:06Z')
   const state = {
     data: {
@@ -315,21 +333,55 @@ test('expanded subscription exposes an immediate timing tooltip across the card'
     loading: false,
     error: null,
   }
+  const tags = []
+  const documentObject = {
+    body: {
+      appendChild(tag) { tags.push(tag) },
+    },
+    createElement(type) {
+      assert.equal(type, 'span')
+      const tag = {
+        style: {}, dataset: {}, attributes: {},
+        setAttribute(name, value) { this.attributes[name] = value },
+        getBoundingClientRect() { return { width: 280, height: 33 } },
+        remove() {
+          const index = tags.indexOf(this)
+          if (index >= 0) tags.splice(index, 1)
+        },
+      }
+      return tag
+    },
+  }
   const fakeDate = { now: () => now, parse: Date.parse }
-  const wide = renderIndicator(state, true, { Date: fakeDate })
+  const wide = renderIndicator(state, true, {
+    Date: fakeDate,
+    document: documentObject,
+    window: { innerWidth: 748, innerHeight: 484 },
+  })
   const rail = renderIndicator(state, false, { Date: fakeDate })
   const expected = '剩余26天（2026/09/18 19:39） 3d18h后重置'
+  const card = { right: 268, top: 378, height: 50 }
 
   assert.equal(wide.props.title, undefined)
-  assert.equal(wide.children[0].props.title, undefined)
-  assert.equal(wide.children[1].props.title, undefined)
-  assert.equal(wide.children[1].props['aria-hidden'], 'true')
-  assert.equal(wide.children[2].props.className, 'relay-balance__timing')
-  assert.equal(wide.children[2].props.role, 'tooltip')
-  assert.equal(wide.children[2].children[0], expected)
+  assert.equal(wide.children.length, 2)
+  assert.equal(typeof wide.props.onMouseEnter, 'function')
+  assert.equal(typeof wide.props.onMouseLeave, 'function')
+  wide.props.onMouseEnter({ currentTarget: { getBoundingClientRect: () => card } })
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].className, 'relay-balance__timing')
+  assert.equal(tags[0].attributes.role, 'tooltip')
+  assert.equal(tags[0].textContent, expected)
+  assert.equal(tags[0].style.left, '276px')
+  assert.equal(tags[0].style.top, '386.5px')
+  assert.equal(tags[0].dataset.visible, 'true')
+  wide.props.onMouseLeave()
+  assert.equal(tags.length, 0)
+
   assert.equal(rail.props.title, undefined)
-  assert.equal(rail.children.length, 2)
-  assert.match(source, /\.relay-balance--wide:hover \.relay-balance__timing/)
+  assert.equal(rail.props.onMouseEnter, undefined)
+  assert.match(source, /position:fixed/)
+  assert.match(source, /font:500 13px\/19px/)
+  assert.match(source, /document\.body\.appendChild\(tag\)/)
   assert.equal(source.includes('title: timingText'), false)
 })
 

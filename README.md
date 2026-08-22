@@ -13,7 +13,7 @@
 - 设置页只需填写 **中转 URL + API Key**，支持测试连接和测试后保存。
 - API Key 由 DSH Credential 服务保存；设置页只显示是否已配置，永远不会读回已存密钥。
 - 展开侧栏只显示 `$剩余/$限额`、百分比和进度条；不显示站点名称或冗余说明。
-- 订阅接口同时提供到期时间和额度窗口起点时，鼠标悬停展开卡片任意位置都会立即显示 `剩余N天（YYYY/MM/DD HH:mm） DdHh后重置`，且不附加其他内容。
+- 订阅接口同时提供到期时间和额度窗口起点时，鼠标悬停展开卡片任意位置都会立即在卡片右侧显示较大字体的 `剩余N天（YYYY/MM/DD HH:mm） DdHh后重置`，且不附加其他内容。
 - 折叠侧栏：真实配额显示百分比环；钱包余额显示金额；不限额显示 `∞`。
 - 支持 API Key 总配额、5 小时/1 日/7 日滚动额度、订阅日/周/月限额、钱包余额和不限额模式。
 - 加载、每 60 秒、页面恢复可见、保存配置和点击时刷新。
@@ -213,7 +213,7 @@ Restart the existing DSH Web process after installation; settings changes apply 
 
 - Key quota: uses `quota.limit`, `quota.used`, and `quota.remaining`.
 - Rolling limits: uses the active 5-hour/day/7-day constraint with the smallest remaining amount.
-- Subscription: uses the configured daily/weekly/monthly constraint with the smallest remaining amount. When the upstream supplies expiry and window-start timestamps, hovering anywhere on the expanded card immediately shows only the subscription days/date and quota-reset countdown.
+- Subscription: uses the configured daily/weekly/monthly constraint with the smallest remaining amount. When the upstream supplies expiry and window-start timestamps, hovering anywhere on the expanded card immediately shows only the subscription days/date and quota-reset countdown in a larger tooltip to the card's right.
 - Wallet: displays the current wallet balance; cumulative key spend is not treated as an original total.
 - Unlimited: displays an explicit unlimited state and no fabricated percentage.
 

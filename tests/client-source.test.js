@@ -248,7 +248,7 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   assert.equal(aborts, 1)
 })
 
-function renderIndicator(state, wide) {
+function renderIndicator(state, wide, globals = {}) {
   const react = {
     useState: () => [state, () => {}],
     useRef: (value) => ({ current: value }),
@@ -256,8 +256,19 @@ function renderIndicator(state, wide) {
     useEffect() {},
     createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
   }
-  return evaluateSource(react).BalanceIndicator({ wide })
+  return evaluateSource(react, globals).BalanceIndicator({ wide })
 }
+
+test('subscription timing text contains only expiry and reset information', () => {
+  const now = Date.parse('2026-08-22T19:44:06Z')
+  assert.equal(clientExports.balanceTimingText({
+    mode: 'subscription',
+    expiresAt: '2026-09-18T19:39:22.033831+08:00',
+    resetAt: '2026-08-26T13:56:11.496Z',
+  }, now), '剩余26天（2026/09/18 19:39） 3d18h后重置')
+  assert.equal(clientExports.balanceTimingText({ mode: 'quota', expiresAt: '2026-09-18T19:39:22+08:00', resetAt: '2026-08-26T13:56:11Z' }, now), null)
+  assert.equal(clientExports.balanceTimingText({ mode: 'subscription', expiresAt: null, resetAt: null }, now), null)
+})
 
 test('quota rendering uses a percentage while wallet rendering does not invent one', () => {
   const quotaState = {
@@ -282,7 +293,8 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.equal(quotaWide.children[0].children[2].children[0], '40.0%')
   assert.equal(quotaWide.children[1].children[0].props.style.width, '40%')
   assert.doesNotMatch(quotaWide.children[0].children[0].children[0], /My Relay|剩余|限额/)
-  assert.equal(quotaWide.props.title, '$40.00/$100.00 · 40.0% · temporary failure')
+  assert.equal(quotaWide.props.title, undefined)
+  assert.equal(quotaWide.children[1].props.title, undefined)
 
   assert.doesNotMatch(walletRail.props.className, /has-percent/)
   assert.equal(walletRail.children[0].children[0], '$40')
@@ -290,6 +302,31 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.equal(walletWide.children[0].children[1], null)
   assert.equal(walletWide.children[0].children[2], null)
   assert.equal(walletWide.children[1], null)
+})
+
+test('expanded subscription exposes the timing tooltip only on the progress track', () => {
+  const now = Date.parse('2026-08-22T19:44:06Z')
+  const state = {
+    data: {
+      displayName: 'Relay', mode: 'subscription', scope: 'weekly', remaining: 290, total: 500,
+      spent: 210, percent: 58, unit: 'USD', planName: 'Pro',
+      expiresAt: '2026-09-18T19:39:22.033831+08:00', resetAt: '2026-08-26T13:56:11.496Z',
+    },
+    loading: false,
+    error: null,
+  }
+  const fakeDate = { now: () => now, parse: Date.parse }
+  const wide = renderIndicator(state, true, { Date: fakeDate })
+  const rail = renderIndicator(state, false, { Date: fakeDate })
+  const expected = '剩余26天（2026/09/18 19:39） 3d18h后重置'
+
+  assert.equal(wide.props.title, undefined)
+  assert.equal(wide.children[0].props.title, undefined)
+  assert.equal(wide.children[1].props.title, expected)
+  assert.equal(wide.children[1].props['aria-label'], expected)
+  assert.equal(wide.children[1].props['aria-hidden'], undefined)
+  assert.equal(wide.children[1].children[0].props.title, undefined)
+  assert.equal(rail.props.title, undefined)
 })
 
 test('unlimited rendering is explicit and remains accessible', () => {

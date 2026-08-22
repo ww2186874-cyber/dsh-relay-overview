@@ -206,8 +206,10 @@ test('normalizes subscription windows using the smallest remaining allowance', (
       daily_limit_usd: 10,
       weekly_usage_usd: 45,
       weekly_limit_usd: 50,
+      weekly_window_start: '2026-08-19T21:56:11.496236+08:00',
       monthly_usage_usd: 20,
       monthly_limit_usd: 100,
+      expires_at: '2026-09-18T19:39:22.033831+08:00',
     },
   }, { fetchedAt: FIXED_TIME })
   assert.equal(result.mode, 'subscription')
@@ -215,6 +217,25 @@ test('normalizes subscription windows using the smallest remaining allowance', (
   assert.equal(result.remaining, 5)
   assert.equal(result.total, 50)
   assert.equal(result.percent, 10)
+  assert.equal(result.resetAt, '2026-08-26T13:56:11.496Z')
+  assert.equal(result.expiresAt, '2026-09-18T19:39:22.033831+08:00')
+})
+
+test('derives a subscription monthly reset from its 30-day rolling window', () => {
+  const result = normalizeSub2ApiUsage({
+    mode: 'unrestricted',
+    isValid: true,
+    subscription: {
+      monthly_usage_usd: 10,
+      monthly_limit_usd: 100,
+      monthly_window_start: '2026-02-01T00:00:00Z',
+      expires_at: '2026-04-01T00:00:00Z',
+    },
+  }, { fetchedAt: FIXED_TIME })
+  assert.equal(result.mode, 'subscription')
+  assert.equal(result.scope, 'monthly')
+  assert.equal(result.resetAt, '2026-03-03T00:00:00.000Z')
+  assert.equal(result.expiresAt, '2026-04-01T00:00:00Z')
 })
 
 test('represents unlimited subscriptions without a fabricated percentage', () => {
@@ -236,6 +257,22 @@ test('rejects malformed Sub2API responses and inconsistent limits', () => {
   assert.throws(() => normalizeSub2ApiUsage({ ...QUOTA, quota: { limit: 10, used: 1, remaining: 11 } }), /超过/)
   assert.throws(() => normalizeSub2ApiUsage({ ...QUOTA, quota: { limit: 100, used: 1000, remaining: 80 } }), /不一致/)
   assert.throws(() => normalizeSub2ApiUsage({ ...QUOTA, quota: { limit: 100, used: 19, remaining: 80 } }), /不一致/)
+  assert.throws(() => normalizeSub2ApiUsage({
+    mode: 'unrestricted', isValid: true,
+    subscription: { weekly_usage_usd: 1, weekly_limit_usd: 10, weekly_window_start: 'not-a-time' },
+  }), /weekly_window_start/)
+  assert.throws(() => normalizeSub2ApiUsage({
+    mode: 'unrestricted', isValid: true,
+    subscription: { weekly_usage_usd: 1, weekly_limit_usd: 10, expires_at: '2026-09-18' },
+  }), /expires_at/)
+  assert.throws(() => normalizeSub2ApiUsage({
+    mode: 'unrestricted', isValid: true,
+    subscription: { weekly_usage_usd: 1, weekly_limit_usd: 10, weekly_window_start: '2026-02-30T00:00:00Z' },
+  }), /weekly_window_start/)
+  assert.throws(() => normalizeSub2ApiUsage({
+    mode: 'unrestricted', isValid: true,
+    subscription: { weekly_usage_usd: 1, weekly_limit_usd: 10, expires_at: '2026-01-01T24:00:00Z' },
+  }), /expires_at/)
   assert.doesNotThrow(() => normalizeSub2ApiUsage({ ...QUOTA, quota: { limit: 100, used: 20 + 1e-10, remaining: 80 } }))
   const overage = normalizeSub2ApiUsage({ ...QUOTA, quota: { limit: 100, used: 101, remaining: 0 } })
   assert.equal(overage.spent, 101)

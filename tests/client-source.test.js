@@ -304,7 +304,7 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.equal(walletWide.children[1], null)
 })
 
-test('expanded subscription exposes the timing tooltip only on the progress track', () => {
+test('expanded subscription exposes an immediate timing tooltip across the card', () => {
   const now = Date.parse('2026-08-22T19:44:06Z')
   const state = {
     data: {
@@ -322,11 +322,15 @@ test('expanded subscription exposes the timing tooltip only on the progress trac
 
   assert.equal(wide.props.title, undefined)
   assert.equal(wide.children[0].props.title, undefined)
-  assert.equal(wide.children[1].props.title, expected)
-  assert.equal(wide.children[1].props['aria-label'], expected)
-  assert.equal(wide.children[1].props['aria-hidden'], undefined)
-  assert.equal(wide.children[1].children[0].props.title, undefined)
+  assert.equal(wide.children[1].props.title, undefined)
+  assert.equal(wide.children[1].props['aria-hidden'], 'true')
+  assert.equal(wide.children[2].props.className, 'relay-balance__timing')
+  assert.equal(wide.children[2].props.role, 'tooltip')
+  assert.equal(wide.children[2].children[0], expected)
   assert.equal(rail.props.title, undefined)
+  assert.equal(rail.children.length, 2)
+  assert.match(source, /\.relay-balance--wide:hover \.relay-balance__timing/)
+  assert.equal(source.includes('title: timingText'), false)
 })
 
 test('unlimited rendering is explicit and remains accessible', () => {

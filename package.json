@@ -1,6 +1,6 @@
 {
   "name": "dsh-relay-balance",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "DSH Web sidebar balance indicator for Sub2API-compatible relay providers",
   "keywords": [
     "deepseek-harness",

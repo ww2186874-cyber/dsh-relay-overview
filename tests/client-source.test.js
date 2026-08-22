@@ -322,7 +322,7 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   assert.equal(walletWide.children[1], null)
 })
 
-test('expanded subscription portals a larger timing tooltip to the card right', () => {
+test('expanded and collapsed subscriptions portal a larger timing tooltip to the card right', () => {
   const now = Date.parse('2026-08-22T19:44:06Z')
   const state = {
     data: {
@@ -358,7 +358,11 @@ test('expanded subscription portals a larger timing tooltip to the card right', 
     document: documentObject,
     window: { innerWidth: 748, innerHeight: 484 },
   })
-  const rail = renderIndicator(state, false, { Date: fakeDate })
+  const rail = renderIndicator(state, false, {
+    Date: fakeDate,
+    document: documentObject,
+    window: { innerWidth: 748, innerHeight: 484 },
+  })
   const expected = '剩余26天（2026/09/18 19:39） 3d18h后重置'
   const card = { right: 268, top: 378, height: 50 }
 
@@ -378,7 +382,16 @@ test('expanded subscription portals a larger timing tooltip to the card right', 
   assert.equal(tags.length, 0)
 
   assert.equal(rail.props.title, undefined)
-  assert.equal(rail.props.onMouseEnter, undefined)
+  assert.equal(typeof rail.props.onMouseEnter, 'function')
+  assert.equal(typeof rail.props.onMouseLeave, 'function')
+  rail.props.onMouseEnter({ currentTarget: { getBoundingClientRect: () => ({ right: 56, top: 400, height: 32 }) } })
+  assert.equal(tags.length, 1)
+  assert.equal(tags[0].textContent, expected)
+  assert.equal(tags[0].style.left, '64px')
+  assert.equal(tags[0].style.top, '399.5px')
+  rail.props.onMouseLeave()
+  assert.equal(tags.length, 0)
+
   assert.match(source, /position:fixed/)
   assert.match(source, /font:500 13px\/19px/)
   assert.match(source, /document\.body\.appendChild\(tag\)/)

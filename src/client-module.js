@@ -394,6 +394,10 @@ function BalanceIndicator({ wide }) {
       type: 'button',
       className: `relay-balance relay-balance--rail relay-balance--${tone}${state.loading ? ' is-loading' : ''}${Number.isFinite(percent) ? ' has-percent' : ''}`,
       'aria-label': label,
+      onMouseEnter: showTimingTooltip,
+      onMouseLeave: hideTimingTooltip,
+      onFocus: showTimingTooltip,
+      onBlur: hideTimingTooltip,
       onClick: refresh,
     },
     React.createElement('span', {

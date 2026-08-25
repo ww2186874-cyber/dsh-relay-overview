@@ -38,7 +38,7 @@
 ### 使用
 
 1. 打开 DSH Web 的 **Settings**。
-2. 进入 **Relay Balance**。
+2. 进入 **中转余额**。
 3. 填写中转 URL，例如 `https://relay.example/v1`。
 4. 填写 API Key。
 5. 点击 **测试连接**；确认余额解析正确后，点击 **测试并保存**。
@@ -67,7 +67,7 @@ dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-balance
 dsh plugin --profile web add C:\path\to\dsh-relay-balance
 ```
 
-正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → Relay Balance** 中配置。
+正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → 中转余额** 中配置。
 
 以下 Cordis row 仅供高级部署或旧版兼容。**Profile patch 覆盖 row config 时会替换整个 `config`，所以必须重述所有键：**
 
@@ -176,7 +176,7 @@ A permanent DSH Web Profile sidebar quota indicator. The package has a generic *
 
 ### Configure
 
-Open **Settings → Relay Balance**, enter the relay URL and API key, test the connection, and save. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
+Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
 
 ### Install
 

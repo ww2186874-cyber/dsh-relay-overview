@@ -38,7 +38,11 @@
 
 ### 设置页
 
-- 普通用户只应看到：中转 URL、API Key、测试连接、测试并保存。
+- 普通用户只应看到：近 30 天使用热力图、中转 URL、API Key、测试连接、测试并保存。
+- 热力图位于标题下、配置表单上方，按北京时间显示今天及此前 29 个自然日，不建立本地历史数据库；Host 请求 `days=30&timezone=Asia/Shanghai`，裁掉更早数据，并将上游未返回的日期补为 0。
+- 热力图使用周日在上的 GitHub 式 7 行布局、小圆角方格、DSH 主题强调色四档自动色阶；不显示月份、星期或图例，今天使用细描边。
+- 热力图卡片标题右侧紧凑显示 30 天累计实际扣费、请求数和 Token；悬停/聚焦/触屏点击方格时，深色浮层显示日期、扣费、请求数和 Token。
+- 热力图只使用已保存配置；保存前不请求历史。进入页面自动刷新，右上角支持手动刷新，保存配置后随全局余额刷新事件更新。
 - 不向普通用户暴露 Provider、Credential reference 或 YAML 概念。
 - 保存后不得把 API Key 回填到浏览器。
 - 只有 HTTPS origin 相同、仅路径发生变化时，才允许 API Key 留空并复用现有密钥；切换 origin 时必须填写新 Key。
@@ -53,9 +57,11 @@
 - 注册 Settings namespace：`dsh-relay-balance`。
 - 本地路由：
   - `GET /relay-balance/status`
+  - `GET /relay-balance/history`
   - `POST /relay-balance/test`
   - `POST /relay-balance/save`
-- Host 负责：读取配置、解析 Credential、请求上游、归一化额度、测试连接、原子化保存设置与密钥、清理不再使用的托管密钥。
+- Host 负责：读取配置、解析 Credential、请求上游、归一化额度与近 30 天每日聚合、测试连接、原子化保存设置与密钥、清理不再使用的托管密钥。
+- 历史公开数据只含 `date`、`actualCost`、`requests`、`totalTokens` 及其 30 天汇总，不公开模型明细、原始响应或逐请求记录。
 
 ### Client
 
@@ -96,7 +102,7 @@
 - Host 上游超时 12 秒；Client 本地操作超时 20 秒。
 - 上游响应同时受 `Content-Length` 和实际读取字节数的 1 MiB 限制，并使用严格 UTF-8 解码。
 - 对外错误必须脱敏，不能返回上游正文、API Key、Credential 值或原始敏感异常。
-- `/relay-balance/test` 与 `/relay-balance/save` 始终只接受直接 loopback、同站点 JSON POST；状态路由默认也只接受直接 loopback。
+- `/relay-balance/test` 与 `/relay-balance/save` 始终只接受直接 loopback、同站点 JSON POST；历史路由始终只接受直接 loopback，状态路由默认也只接受直接 loopback。
 - loopback 防护沿用 DSH 本机 Web API 的信任边界，不是抵御本机恶意进程的独立身份认证。
 - 托管 Credential slot 由 origin 的 SHA-256 派生，使用 A/B 双槽：`DSH_RELAY_BALANCE_<32_HEX>_A` 与 `_B`。
 - Host 必须串行执行完整的测试、暂存密钥、Settings revision 切换和清理事务。
@@ -144,8 +150,8 @@ pnpm pack --dry-run
 
 1. `pnpm verify` 全部通过，Client 生成产物没有漂移。
 2. 当前 Web Profile composition 能成功解析。
-3. `/relay-balance/status` 返回 200，且只含归一化后的公开字段。
-4. 设置页仍只显示 URL、API Key、测试连接和测试并保存。
+3. `/relay-balance/status` 与 `/relay-balance/history` 返回 200，且只含归一化后的公开字段。
+4. 设置页仍只显示近 30 天热力图、URL、API Key、测试连接和测试并保存。
 5. API Key 保存后不回填；跨 origin 留空 Key 仍被拒绝。
 6. 展开侧栏仍是完整 footer row；折叠时 Relay、Cordis 和 Settings 布局正常。
 7. 点击、分钟、页面可见性和超时刷新仍正常。

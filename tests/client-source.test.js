@@ -39,6 +39,22 @@ function evaluateBundle() {
   })
 }
 
+function historyFixture() {
+  const start = Date.parse('2026-07-22T00:00:00.000Z')
+  const days = Array.from({ length: 30 }, (_, index) => ({
+    date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+    actualCost: 0,
+    requests: 0,
+    totalTokens: 0,
+  }))
+  days[27] = { date: '2026-08-18', actualCost: 0.0042, requests: 2, totalTokens: 320 }
+  days[29] = { date: '2026-08-20', actualCost: 1.25, requests: 12, totalTokens: 45_000 }
+  return {
+    unit: 'USD', timeZone: 'Asia/Shanghai', from: '2026-07-22', through: '2026-08-20',
+    days, summary: { actualCost: 999, requests: 999, totalTokens: 999 }, fetchedAt: '2026-08-20T00:00:00.000Z',
+  }
+}
+
 function timerHarness() {
   const timers = new Map()
   let nextId = 1
@@ -76,6 +92,41 @@ test('actual generated bundle exports generic Relay helpers', () => {
   assert.equal(bundled.toneOf(null, 'wallet'), 'neutral')
   assert.equal(bundled.money(12.345, 'USD'), '$12.35')
   assert.equal(typeof bundled.createBalanceRequestManager, 'function')
+})
+
+test('history decoder accepts exactly 30 consecutive dates and recomputes public summaries', () => {
+  const decoded = clientExports.decodeHistoryData(historyFixture())
+  assert.equal(decoded.days.length, 30)
+  assert.deepEqual({ ...decoded.summary }, { actualCost: 1.2542, requests: 14, totalTokens: 45_320 })
+  assert.throws(() => clientExports.decodeHistoryData({ ...historyFixture(), timeZone: 'UTC' }), /无效/)
+  assert.throws(() => clientExports.decodeHistoryData({ ...historyFixture(), days: historyFixture().days.slice(1) }), /无效/)
+  const gap = historyFixture()
+  gap.days[12] = { ...gap.days[12], date: '2026-08-01' }
+  assert.throws(() => clientExports.decodeHistoryData(gap), /无效/)
+})
+
+test('history helpers provide compact precision, four ranked levels, and viewport-safe tooltips', () => {
+  assert.equal(clientExports.historyMoney(0, 'USD'), '$0')
+  assert.equal(clientExports.historyMoney(0.0042, 'USD'), '$0.0042')
+  assert.equal(clientExports.historyMoney(1.25, 'USD'), '$1.25')
+  assert.equal(clientExports.compactMetric(128_000), '128K')
+  assert.equal(clientExports.compactMetric(1_250_000), '1.3M')
+  const scale = clientExports.heatScale([
+    { actualCost: 0 }, { actualCost: 1 }, { actualCost: 2 }, { actualCost: 3 }, { actualCost: 4 },
+  ])
+  assert.deepEqual(Array.from(scale), [1, 2, 3, 4])
+  assert.deepEqual([0, 1, 2, 3, 4].map((value) => clientExports.heatLevel(value, scale)), [0, 1, 2, 3, 4])
+  assert.equal(clientExports.heatLevel(7, [7]), 4)
+  assert.deepEqual({ ...clientExports.heatmapTooltipPosition(
+    { left: 100, top: 100, bottom: 116, width: 16 },
+    { width: 180, height: 48 },
+    { width: 400, height: 300 },
+  ) }, { left: 18, top: 44 })
+  assert.deepEqual({ ...clientExports.heatmapTooltipPosition(
+    { left: 5, top: 4, bottom: 20, width: 16 },
+    { width: 180, height: 48 },
+    { width: 200, height: 100 },
+  ) }, { left: 8, top: 28 })
 })
 
 test('request manager deduplicates refreshes and aborts cleanup without a false error', async () => {
@@ -128,6 +179,89 @@ test('request manager deduplicates refreshes and aborts cleanup without a false 
   assert.deepEqual(successes, [data])
   assert.equal(loading.length, 2)
   assert.equal(timers.count(), 0)
+})
+
+test('history request manager uses only the same-origin Host route and deduplicates refreshes', async () => {
+  const seen = []
+  const successes = []
+  const errors = []
+  const timers = timerHarness()
+  const manager = clientExports.createHistoryRequestManager({
+    fetchImpl(url, init) {
+      seen.push({ url, init })
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, data: historyFixture() }) })
+    },
+    createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
+    onLoading() {},
+    onSuccess: (data) => successes.push(data),
+    onError: (message) => errors.push(message),
+  })
+  const first = manager.refresh()
+  assert.equal(manager.refresh(), first)
+  const data = await first
+  assert.equal(data.days.length, 30)
+  assert.equal(seen.length, 1)
+  assert.equal(seen[0].url, '/relay-balance/history')
+  assert.equal(seen[0].init.method, 'GET')
+  assert.equal(seen[0].init.credentials, 'same-origin')
+  assert.equal(seen[0].init.cache, 'no-store')
+  assert.equal(successes.length, 1)
+  assert.deepEqual(errors, [])
+  assert.equal(timers.count(), 0)
+})
+
+test('history request manager rejects malformed local data and permits retry', async () => {
+  const errors = []
+  let invalid = true
+  const timers = timerHarness()
+  const manager = clientExports.createHistoryRequestManager({
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ ok: true, data: invalid ? { days: [] } : historyFixture() }) }),
+    createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
+    onLoading() {}, onSuccess() {}, onError: (message) => errors.push(message),
+  })
+  assert.equal(await manager.refresh(), null)
+  assert.deepEqual(errors, ['每日使用数据无效'])
+  invalid = false
+  assert.equal((await manager.refresh()).days.length, 30)
+})
+
+test('history timeout aborts a hung request while manual cleanup stays silent', async () => {
+  const requests = []
+  const errors = []
+  const timers = timerHarness()
+  const manager = clientExports.createHistoryRequestManager({
+    fetchImpl(_url, init) {
+      return new Promise((_resolve, reject) => {
+        requests.push(init)
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          reject(error)
+        }, { once: true })
+      })
+    },
+    createController: () => new AbortController(),
+    setTimeoutImpl: timers.set,
+    clearTimeoutImpl: timers.clear,
+    onLoading() {}, onSuccess() {}, onError: (message) => errors.push(message),
+  })
+  const timedOut = manager.refresh()
+  await Promise.resolve()
+  assert.equal(timers.fireFirst(), 20_000)
+  assert.equal(await timedOut, null)
+  assert.equal(requests[0].signal.aborted, true)
+  assert.deepEqual(errors, ['每日使用查询超时'])
+
+  const disposed = manager.refresh()
+  await Promise.resolve()
+  manager.abort()
+  assert.equal(await disposed, null)
+  assert.equal(requests[1].signal.aborted, true)
+  assert.deepEqual(errors, ['每日使用查询超时'])
 })
 
 test('client timeout aborts a hung request, reports it, and permits retry', async () => {
@@ -207,6 +341,25 @@ test('request manager reports genuine local route failures', async () => {
   assert.deepEqual(errors, ['visible network failure'])
 })
 
+test('history refresh lifecycle loads on entry, listens for saved-config refresh, and cleans up', () => {
+  let refreshes = 0
+  let aborts = 0
+  let refreshHandler
+  let removedHandler
+  const manager = { refresh() { refreshes += 1 }, abort() { aborts += 1 } }
+  const windowObject = {
+    addEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); refreshHandler = callback },
+    removeEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); removedHandler = callback },
+  }
+  const dispose = clientExports.installHistoryRefreshLifecycle(manager, windowObject)
+  assert.equal(refreshes, 1)
+  refreshHandler()
+  assert.equal(refreshes, 2)
+  dispose()
+  assert.equal(removedHandler, refreshHandler)
+  assert.equal(aborts, 1)
+})
+
 test('refresh lifecycle installs load, minute, and visibility refresh and cleans up', () => {
   let refreshes = 0
   let aborts = 0
@@ -248,16 +401,53 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   assert.equal(aborts, 1)
 })
 
-function renderIndicator(state, wide, globals = {}) {
+function renderWithState(componentName, state, props = {}, globals = {}) {
   const react = {
     useState: () => [state, () => {}],
     useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback,
     useEffect() {},
-    createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+    createElement: (type, elementProps, ...children) => ({ type, props: elementProps || {}, children }),
   }
-  return evaluateSource(react, globals).BalanceIndicator({ wide })
+  return evaluateSource(react, globals)[componentName](props)
 }
+
+function renderIndicator(state, wide, globals = {}) {
+  return renderWithState('BalanceIndicator', state, { wide }, globals)
+}
+
+function renderHeatmap(state, enabled = true, globals = {}) {
+  return renderWithState('DailyUsageHeatmap', state, { enabled }, globals)
+}
+
+test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, and today outline', () => {
+  const data = clientExports.decodeHistoryData(historyFixture())
+  const heatmap = renderHeatmap({ data, loading: false, error: null })
+  assert.match(heatmap.props.className, /relay-history/)
+  assert.equal(heatmap.children[0].children[0].children[0], '近 30 天使用情况')
+  assert.equal(heatmap.children[0].children[1].children[0].children[0], '$1.25 · 14 次 · 45.3K Token')
+  const cells = heatmap.children[1].children[0]
+  assert.equal(cells.length, 33, 'Wednesday range start needs three Sunday-first leading blanks plus 30 days')
+  assert.equal(cells.slice(0, 3).every((cell) => cell.props.className === 'relay-history__blank'), true)
+  const firstDay = cells[3]
+  const sparseZeroDay = cells[4]
+  const today = cells.at(-1)
+  assert.match(firstDay.props.className, /relay-history__day--0/)
+  assert.match(sparseZeroDay.props['aria-label'], /扣费 \$0，0 次请求，0 Token/)
+  assert.match(today.props.className, /relay-history__day--4 is-today/)
+  assert.match(today.props['aria-label'], /2026年8月20日，扣费 \$1\.25，12 次请求，45K Token/)
+  assert.equal(typeof today.props.onMouseEnter, 'function')
+  assert.equal(typeof today.props.onClick, 'function')
+  assert.equal(heatmap.children[1].props.role, 'group')
+
+  const waiting = renderHeatmap({ data: null, loading: false, error: null }, false)
+  assert.equal(waiting.children[0].children[1].children[0].children[0], '等待配置')
+  assert.equal(waiting.children[0].children[1].children[1].props.disabled, true)
+  assert.equal(waiting.children[1].children[0], '保存中转 URL 和 API Key 后即可查看。')
+  assert.match(source, /grid-template-rows:repeat\(7,24px\)/)
+  assert.match(source, /grid-auto-columns:24px/)
+  assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
+})
 
 test('subscription timing text contains only expiry and reset information', () => {
   const now = Date.parse('2026-08-22T19:44:06Z')
@@ -435,6 +625,7 @@ test('client uses write-only credential APIs and never calls an upstream URL dir
     assert.equal(text.includes('Bearer '), false)
     assert.equal(text.includes('localStorage'), false)
     assert.match(text, /\/relay-balance\/status/)
+    assert.match(text, /\/relay-balance\/history/)
     assert.match(text, /\/relay-balance\/test/)
     assert.match(text, /\/relay-balance\/save/)
     assert.match(text, /api\.credentials\.describe/)

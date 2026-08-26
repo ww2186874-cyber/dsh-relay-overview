@@ -1,12 +1,14 @@
 const React = require('react')
 
 const ROUTE_PATH = '/relay-balance/status'
+const HISTORY_ROUTE_PATH = '/relay-balance/history'
 const TEST_ROUTE_PATH = '/relay-balance/test'
 const SAVE_ROUTE_PATH = '/relay-balance/save'
 const SETTINGS_NAMESPACE = 'dsh-relay-balance'
 const REFRESH_EVENT = 'relay-balance:refresh'
 const REFRESH_MS = 60_000
 const CLIENT_TIMEOUT_MS = 20_000
+const HISTORY_DAYS = 30
 
 function toneOf(percent, mode) {
   if (mode === 'unlimited') return 'healthy'
@@ -27,6 +29,101 @@ function compactMoney(value, unit) {
   if (value >= 1000) return `${prefix}${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}k`
   if (value >= 100) return `${prefix}${Math.round(value)}`
   return `${prefix}${value.toFixed(value >= 10 ? 0 : 1)}`
+}
+
+function trimDecimal(value, digits) {
+  return value.toFixed(digits).replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')
+}
+
+function compactMetric(value) {
+  if (!Number.isFinite(value) || value < 0) return '—'
+  if (value >= 1_000_000_000) return `${trimDecimal(value / 1_000_000_000, value >= 10_000_000_000 ? 0 : 1)}B`
+  if (value >= 1_000_000) return `${trimDecimal(value / 1_000_000, value >= 10_000_000 ? 0 : 1)}M`
+  if (value >= 10_000) return `${trimDecimal(value / 1_000, value >= 100_000 ? 0 : 1)}K`
+  return Math.round(value).toLocaleString('en-US')
+}
+
+function historyMoney(value, unit) {
+  if (!Number.isFinite(value) || value < 0) return '—'
+  let amount
+  if (value === 0) amount = '0'
+  else if (value < 0.0001) amount = trimDecimal(value, 6)
+  else if (value < 0.01) amount = trimDecimal(value, 4)
+  else if (value < 1) amount = trimDecimal(value, 3)
+  else if (value < 1000) amount = value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+  else if (value < 1_000_000) amount = `${trimDecimal(value / 1000, value >= 10_000 ? 0 : 1)}K`
+  else amount = `${trimDecimal(value / 1_000_000, value >= 10_000_000 ? 0 : 1)}M`
+  return unit === 'USD' ? `$${amount}` : `${amount} ${unit}`
+}
+
+function historyDateText(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  return match === null ? value : `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
+}
+
+function decodeHistoryData(value) {
+  if (typeof value !== 'object' || value === null || value.timeZone !== 'Asia/Shanghai' || !Array.isArray(value.days) || value.days.length !== HISTORY_DAYS) {
+    throw new Error('每日使用数据无效')
+  }
+  const days = value.days.map((day, index) => {
+    if (typeof day !== 'object' || day === null || !/^\d{4}-\d{2}-\d{2}$/.test(day.date)
+      || !Number.isFinite(day.actualCost) || day.actualCost < 0
+      || !Number.isSafeInteger(day.requests) || day.requests < 0
+      || !Number.isSafeInteger(day.totalTokens) || day.totalTokens < 0) {
+      throw new Error('每日使用数据无效')
+    }
+    const milliseconds = Date.parse(`${day.date}T00:00:00.000Z`)
+    if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString().slice(0, 10) !== day.date) throw new Error('每日使用数据无效')
+    if (index > 0) {
+      const previous = Date.parse(`${value.days[index - 1].date}T00:00:00.000Z`)
+      if (milliseconds - previous !== 86_400_000) throw new Error('每日使用数据无效')
+    }
+    return { date: day.date, actualCost: day.actualCost, requests: day.requests, totalTokens: day.totalTokens }
+  })
+  if (value.from !== days[0].date || value.through !== days[days.length - 1].date) throw new Error('每日使用数据无效')
+  const summary = days.reduce((total, day) => ({
+    actualCost: total.actualCost + day.actualCost,
+    requests: total.requests + day.requests,
+    totalTokens: total.totalTokens + day.totalTokens,
+  }), { actualCost: 0, requests: 0, totalTokens: 0 })
+  if (!Number.isFinite(summary.actualCost) || !Number.isSafeInteger(summary.requests) || !Number.isSafeInteger(summary.totalTokens)) {
+    throw new Error('每日使用数据无效')
+  }
+  return {
+    unit: typeof value.unit === 'string' && value.unit !== '' ? value.unit : 'USD',
+    timeZone: value.timeZone,
+    from: value.from,
+    through: value.through,
+    days,
+    summary,
+    fetchedAt: typeof value.fetchedAt === 'string' ? value.fetchedAt : '',
+  }
+}
+
+function heatScale(days) {
+  return [...new Set(days.map((day) => day.actualCost).filter((value) => value > 0).sort((a, b) => a - b))]
+}
+
+function heatLevel(value, scale) {
+  if (!Number.isFinite(value) || value <= 0 || scale.length === 0) return 0
+  if (scale.length === 1) return 4
+  let index = scale.findIndex((threshold) => value <= threshold)
+  if (index < 0) index = scale.length - 1
+  return Math.max(1, Math.min(4, 1 + Math.round(index / (scale.length - 1) * 3)))
+}
+
+function weekdayOf(date) {
+  return new Date(`${date}T00:00:00.000Z`).getUTCDay()
+}
+
+function heatmapTooltipPosition(cellRect, tooltipSize, viewport) {
+  const gap = 8
+  const edge = 8
+  const maxLeft = Math.max(edge, viewport.width - tooltipSize.width - edge)
+  const left = Math.min(maxLeft, Math.max(edge, cellRect.left + (cellRect.width - tooltipSize.width) / 2))
+  const above = cellRect.top - tooltipSize.height - gap
+  const top = above >= edge ? above : Math.min(Math.max(edge, viewport.height - tooltipSize.height - edge), cellRect.bottom + gap)
+  return { left, top }
 }
 
 function percentText(value) {
@@ -167,6 +264,70 @@ function createBalanceRequestManager({
   return { refresh, abort }
 }
 
+function createHistoryRequestManager({
+  fetchImpl,
+  createController,
+  setTimeoutImpl,
+  clearTimeoutImpl,
+  onLoading,
+  onSuccess,
+  onError,
+}) {
+  let current = null
+
+  function refresh() {
+    if (current !== null) return current.promise
+    const controller = createController()
+    const record = { controller, promise: null, timer: null, timedOut: false }
+    onLoading()
+    record.timer = setTimeoutImpl(() => {
+      record.timedOut = true
+      controller.abort()
+    }, CLIENT_TIMEOUT_MS)
+    record.promise = Promise.resolve()
+      .then(() => fetchImpl(HISTORY_ROUTE_PATH, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: controller.signal,
+      }))
+      .then(async (response) => {
+        const body = await response.json().catch(() => null)
+        if (record.timedOut) throw new Error('client-timeout')
+        if (!response.ok || body?.ok !== true || typeof body.data !== 'object' || body.data === null) {
+          throw new Error(body?.error?.message || `每日使用查询失败（HTTP ${response.status}）`)
+        }
+        return decodeHistoryData(body.data)
+      })
+      .then((data) => {
+        if (!controller.signal.aborted) onSuccess(data)
+        return data
+      })
+      .catch((error) => {
+        if (record.timedOut) onError('每日使用查询超时')
+        else if (!controller.signal.aborted) onError(error?.message || '每日使用查询失败')
+        return null
+      })
+      .finally(() => {
+        clearTimeoutImpl(record.timer)
+        if (current === record) current = null
+      })
+    current = record
+    return record.promise
+  }
+
+  function abort() {
+    const record = current
+    if (record === null) return
+    current = null
+    clearTimeoutImpl(record.timer)
+    record.controller.abort()
+  }
+
+  return { refresh, abort }
+}
+
 function installRefreshLifecycle(manager, windowObject, documentObject) {
   manager.refresh()
   const interval = windowObject.setInterval(() => {
@@ -180,6 +341,15 @@ function installRefreshLifecycle(manager, windowObject, documentObject) {
   return () => {
     windowObject.clearInterval(interval)
     documentObject.removeEventListener('visibilitychange', onVisibility)
+    windowObject.removeEventListener(REFRESH_EVENT, manager.refresh)
+    manager.abort()
+  }
+}
+
+function installHistoryRefreshLifecycle(manager, windowObject) {
+  manager.refresh()
+  windowObject.addEventListener(REFRESH_EVENT, manager.refresh)
+  return () => {
     windowObject.removeEventListener(REFRESH_EVENT, manager.refresh)
     manager.abort()
   }
@@ -213,6 +383,133 @@ async function callRelayConnection(fetchImpl, route, input, signal) {
     throw new Error(body?.error?.message || `测试失败（HTTP ${response.status}）`)
   }
   return body.data
+}
+
+function DailyUsageHeatmap({ enabled }) {
+  const [state, setState] = React.useState({ data: null, loading: enabled, error: null })
+  const mounted = React.useRef(false)
+  const manager = React.useRef(null)
+  const tooltip = React.useRef(null)
+
+  if (manager.current === null) {
+    manager.current = createHistoryRequestManager({
+      fetchImpl: (...args) => fetch(...args),
+      createController: () => new AbortController(),
+      setTimeoutImpl: (...args) => window.setTimeout(...args),
+      clearTimeoutImpl: (id) => window.clearTimeout(id),
+      onLoading: () => {
+        if (mounted.current) setState((previous) => ({ ...previous, loading: true, error: null }))
+      },
+      onSuccess: (data) => {
+        if (mounted.current) setState({ data, loading: false, error: null })
+      },
+      onError: (message) => {
+        if (mounted.current) setState((previous) => ({ ...previous, loading: false, error: message }))
+      },
+    })
+  }
+
+  const hideTooltip = React.useCallback(() => {
+    tooltip.current?.remove()
+    tooltip.current = null
+  }, [])
+  const showTooltip = React.useCallback((event, day) => {
+    hideTooltip()
+    const tag = document.createElement('div')
+    tag.className = 'relay-history__tooltip'
+    tag.setAttribute('aria-hidden', 'true')
+    const dateLine = document.createElement('strong')
+    dateLine.textContent = historyDateText(day.date)
+    const detailLine = document.createElement('span')
+    detailLine.textContent = `${historyMoney(day.actualCost, state.data?.unit || 'USD')} · ${day.requests.toLocaleString('en-US')} 次 · ${compactMetric(day.totalTokens)} Token`
+    tag.append(dateLine, detailLine)
+    document.body.appendChild(tag)
+    const cellRect = event.currentTarget.getBoundingClientRect()
+    const tooltipRect = tag.getBoundingClientRect()
+    const position = heatmapTooltipPosition(cellRect, tooltipRect, { width: window.innerWidth, height: window.innerHeight })
+    tag.style.left = `${position.left}px`
+    tag.style.top = `${position.top}px`
+    tag.dataset.visible = 'true'
+    tooltip.current = tag
+  }, [hideTooltip, state.data?.unit])
+  const refresh = React.useCallback(() => enabled ? manager.current.refresh() : Promise.resolve(null), [enabled])
+  React.useEffect(() => {
+    mounted.current = true
+    if (!enabled) {
+      setState({ data: null, loading: false, error: null })
+      return () => {
+        mounted.current = false
+        hideTooltip()
+        manager.current.abort()
+      }
+    }
+    setState((previous) => ({ ...previous, loading: true, error: null }))
+    const dispose = installHistoryRefreshLifecycle(manager.current, window)
+    const dismiss = () => hideTooltip()
+    const dismissWithEscape = (event) => { if (event.key === 'Escape') hideTooltip() }
+    window.addEventListener('resize', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('keydown', dismissWithEscape)
+    return () => {
+      mounted.current = false
+      hideTooltip()
+      window.removeEventListener('resize', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('keydown', dismissWithEscape)
+      dispose()
+    }
+  }, [enabled, hideTooltip, refresh])
+  React.useEffect(() => hideTooltip(), [hideTooltip, state.data, state.loading, state.error])
+
+  const data = state.data
+  const scale = data === null ? [] : heatScale(data.days)
+  const summaryText = data === null
+    ? (state.loading ? '正在加载…' : (enabled ? '暂无数据' : '等待配置'))
+    : `${historyMoney(data.summary.actualCost, data.unit)} · ${compactMetric(data.summary.requests)} 次 · ${compactMetric(data.summary.totalTokens)} Token`
+  const cells = []
+  if (data !== null) {
+    const leading = weekdayOf(data.days[0].date)
+    for (let index = 0; index < leading; index += 1) {
+      cells.push(React.createElement('span', { key: `leading-${index}`, className: 'relay-history__blank', 'aria-hidden': 'true' }))
+    }
+    for (const day of data.days) {
+      const detail = `${historyDateText(day.date)}，扣费 ${historyMoney(day.actualCost, data.unit)}，${day.requests.toLocaleString('en-US')} 次请求，${compactMetric(day.totalTokens)} Token`
+      cells.push(React.createElement('button', {
+        key: day.date,
+        type: 'button',
+        className: `relay-history__day relay-history__day--${heatLevel(day.actualCost, scale)}${day.date === data.through ? ' is-today' : ''}`,
+        'aria-label': detail,
+        onMouseEnter: (event) => showTooltip(event, day),
+        onMouseLeave: hideTooltip,
+        onFocus: (event) => showTooltip(event, day),
+        onBlur: hideTooltip,
+        onClick: (event) => showTooltip(event, day),
+      }))
+    }
+  } else if (state.loading) {
+    for (let index = 0; index < 35; index += 1) {
+      cells.push(React.createElement('span', { key: `loading-${index}`, className: 'relay-history__day relay-history__day--loading', 'aria-hidden': 'true' }))
+    }
+  }
+
+  return React.createElement('section', { className: `relay-history${state.loading ? ' is-loading' : ''}`, 'aria-labelledby': 'relay-history-title' },
+    React.createElement('header', { className: 'relay-history__header' },
+      React.createElement('h3', { id: 'relay-history-title' }, '近 30 天使用情况'),
+      React.createElement('div', { className: 'relay-history__summary' },
+        React.createElement('span', null, summaryText),
+        React.createElement('button', {
+          type: 'button',
+          className: 'relay-history__refresh',
+          disabled: state.loading || !enabled,
+          'aria-label': state.loading ? '正在刷新每日使用情况' : '刷新每日使用情况',
+          onClick: refresh,
+        }, '↻'))),
+    cells.length > 0
+      ? React.createElement('div', { className: 'relay-history__grid', role: 'group', 'aria-label': '最近 30 天每日实际扣费热力图' }, cells)
+      : React.createElement('p', { className: 'relay-history__empty' }, enabled ? '暂时没有可显示的每日使用数据。' : '保存中转 URL 和 API Key 后即可查看。'),
+    state.error !== null ? React.createElement('p', { className: 'relay-history__error', role: 'status' }, state.error) : null)
 }
 
 function RelaySettingsSection({ relaySettings, api }) {
@@ -295,6 +592,7 @@ function RelaySettingsSection({ relaySettings, api }) {
     React.createElement('header', { className: 'relay-settings__header' },
       React.createElement('h2', null, '中转余额'),
       React.createElement('p', null, '填写中转 URL 和 API Key，即可查询并显示剩余额度。')),
+    React.createElement(DailyUsageHeatmap, { enabled: configured && value.baseURL.trim() !== '' }),
     React.createElement('label', { className: 'relay-settings__field' },
       React.createElement('span', null, '中转 URL'),
       React.createElement('input', {
@@ -446,7 +744,12 @@ const css = `
 .relay-balance.has-percent .relay-balance__ring{background:radial-gradient(circle at center,var(--dsw-specific-sidebar-fill) 58%,transparent 60%),conic-gradient(var(--relay-tone) var(--relay-progress),var(--dsw-alias-border-l1) 0)}
 .relay-balance__warning{position:absolute;right:1px;top:0;width:12px;height:12px;border-radius:50%;background:var(--dsw-specific-sidebar-fill);font-size:9px;line-height:12px;text-align:center}
 .relay-settings{box-sizing:border-box;max-width:680px;color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:18px}.relay-settings__header{display:flex;flex-direction:column;gap:4px}.relay-settings__header h2{margin:0;font-size:18px;line-height:26px}.relay-settings__header p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}.relay-settings__field{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:600}.relay-settings__field input{box-sizing:border-box;width:100%;height:38px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-weight:400;padding:0 11px;outline:none}.relay-settings__field input:focus{border-color:var(--dsw-alias-state-business-primary,#3b82f6);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 20%,transparent)}.relay-settings__field small{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}.relay-settings__actions{display:flex;justify-content:flex-end;gap:8px}.relay-settings__actions button{height:36px;border:0;border-radius:18px;cursor:pointer;font:inherit;padding:0 16px}.relay-settings__actions button:disabled{cursor:not-allowed;opacity:.55}.relay-settings__primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}.relay-settings__secondary{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.relay-settings__notice,.relay-settings__readonly{margin:0;font-size:12px;line-height:18px}.relay-settings__notice.is-success{color:var(--dsw-alias-state-success-primary,#22a06b)}.relay-settings__notice.is-error,.relay-settings__readonly{color:var(--dsw-alias-state-error-primary,#df4b4b)}
-@media (prefers-reduced-motion:reduce){.relay-balance,.relay-balance__fill{transition:none}}
+.relay-history{--relay-history-accent:var(--dsw-alias-brand-primary,var(--dsw-alias-state-business-primary,#3b82f6));box-sizing:border-box;min-height:178px;padding:16px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base));display:flex;flex-direction:column;gap:14px}.relay-history__header{display:flex;align-items:center;gap:12px;min-width:0}.relay-history__header h3{margin:0;flex:none;color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px;font-weight:650}.relay-history__summary{margin-left:auto;min-width:0;display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-tertiary));font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}.relay-history__summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.relay-history__refresh{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-tertiary));font:600 17px/1 system-ui,sans-serif;cursor:pointer;transition:background .16s ease,color .16s ease,transform .2s ease}.relay-history__refresh:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.relay-history__refresh:focus-visible,.relay-history__day:focus-visible{outline:2px solid var(--relay-history-accent);outline-offset:2px}.relay-history__refresh:disabled{cursor:wait;opacity:.55}.relay-history.is-loading .relay-history__refresh{transform:rotate(90deg)}
+.relay-history__grid{display:grid;grid-template-rows:repeat(7,24px);grid-auto-flow:column;grid-auto-columns:24px;width:max-content;max-width:100%}.relay-history__day,.relay-history__blank{box-sizing:border-box;width:24px;height:24px}.relay-history__blank{display:block}.relay-history__day{appearance:none;padding:0;border:0;background:transparent;cursor:default;display:grid;place-items:center}.relay-history__day::before{content:"";box-sizing:border-box;width:16px;height:16px;border:1px solid transparent;border-radius:3px;background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base));transition:transform .12s ease,box-shadow .12s ease,background .16s ease}.relay-history__day:hover::before,.relay-history__day:focus-visible::before{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.18)}.relay-history__day--1::before{background:color-mix(in srgb,var(--relay-history-accent) 28%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--2::before{background:color-mix(in srgb,var(--relay-history-accent) 48%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--3::before{background:color-mix(in srgb,var(--relay-history-accent) 70%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--4::before{background:color-mix(in srgb,var(--relay-history-accent) 92%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day.is-today::before{border-color:var(--relay-history-accent);box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base)),0 0 0 2px var(--relay-history-accent)}.relay-history__day--loading::before{border:0;animation:relay-history-pulse 1.2s ease-in-out infinite alternate}.relay-history__error,.relay-history__empty{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}.relay-history__error{color:var(--dsw-alias-state-error-primary,#df4b4b)}.relay-history__tooltip{position:fixed;z-index:1001;box-sizing:border-box;width:max-content;max-width:calc(100vw - 16px);padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#202124;color:#fff;font:500 12px/18px var(--dsw-font-family,system-ui,sans-serif);box-shadow:0 6px 18px rgba(0,0,0,.32);pointer-events:none;opacity:0;transform:translateY(2px);transition:opacity .1s ease,transform .1s ease}.relay-history__tooltip strong,.relay-history__tooltip span{display:block}.relay-history__tooltip strong{font-size:12px;font-weight:650}.relay-history__tooltip span{color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums}.relay-history__tooltip[data-visible="true"]{opacity:1;transform:translateY(0)}
+@keyframes relay-history-pulse{from{background:var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base))}to{background:var(--dsw-alias-border-l1)}}
+@media (max-width:560px){.relay-history__header{align-items:flex-start;flex-direction:column;gap:4px}.relay-history__summary{width:100%;margin-left:0}.relay-history__summary>span{white-space:normal}.relay-history__refresh{margin-left:auto;margin-top:-24px}}
+@media (forced-colors:active){.relay-history__day{forced-color-adjust:none}.relay-history__day::before{border-color:GrayText}.relay-history__day--1::before{background:Highlight;opacity:.35}.relay-history__day--2::before{background:Highlight;opacity:.55}.relay-history__day--3::before{background:Highlight;opacity:.75}.relay-history__day--4::before{background:Highlight;opacity:1}.relay-history__day.is-today{outline:2px solid CanvasText;outline-offset:1px}}
+@media (prefers-reduced-motion:reduce){.relay-balance,.relay-balance__fill,.relay-history__refresh,.relay-history__day::before,.relay-history__tooltip{transition:none}.relay-history__day--loading::before{animation:none}}
 `
 
 const inject = ['slots', 'connection', 'settingsScope']
@@ -483,11 +786,20 @@ function apply(ctx) {
 exports.apply = apply
 exports.inject = inject
 exports.BalanceIndicator = BalanceIndicator
+exports.DailyUsageHeatmap = DailyUsageHeatmap
 exports.RelaySettingsSection = RelaySettingsSection
 exports.createBalanceRequestManager = createBalanceRequestManager
+exports.createHistoryRequestManager = createHistoryRequestManager
 exports.installRefreshLifecycle = installRefreshLifecycle
+exports.installHistoryRefreshLifecycle = installHistoryRefreshLifecycle
 exports.callRelayConnection = callRelayConnection
 exports.decodeRelaySettings = decodeRelaySettings
+exports.decodeHistoryData = decodeHistoryData
+exports.heatScale = heatScale
+exports.heatLevel = heatLevel
+exports.heatmapTooltipPosition = heatmapTooltipPosition
+exports.historyMoney = historyMoney
+exports.compactMetric = compactMetric
 exports.toneOf = toneOf
 exports.money = money
 exports.amountText = amountText

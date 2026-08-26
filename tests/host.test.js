@@ -9,9 +9,12 @@ import {
   createConnectionTestHandler,
   createConnectionSaver,
   createConnectionSaveHandler,
+  createHistoryHandler,
+  createHistoryReader,
   createStatusHandler,
   normalizePluginConfig,
   normalizeRelaySettings,
+  normalizeSub2ApiHistory,
   normalizeSub2ApiUsage,
   resolveRelayConfig,
 } from '../lib/index.js'
@@ -38,6 +41,14 @@ const QUOTA = {
   remaining: 80,
   quota: { limit: 100, used: 20, remaining: 80, unit: 'USD' },
   usage: { total: { actual_cost: 20 } },
+}
+const HISTORY = {
+  ...QUOTA,
+  daily_usage: [
+    { date: '2026-08-20', actual_cost: 1.25, requests: 12, total_tokens: 45_000 },
+    { date: '2026-08-18', actual_cost: 0.0042, requests: 2, total_tokens: 320 },
+    { date: '2026-06-01', actual_cost: 999, requests: 999, total_tokens: 999 },
+  ],
 }
 
 function settingsValue() {
@@ -251,6 +262,42 @@ test('represents unlimited subscriptions without a fabricated percentage', () =>
   assert.equal(result.spent, 12)
 })
 
+test('normalizes sparse history into exactly 30 Shanghai calendar days and discards older rows', () => {
+  const result = normalizeSub2ApiHistory(HISTORY, { now: new Date(FIXED_TIME), fetchedAt: FIXED_TIME })
+  assert.equal(result.timeZone, 'Asia/Shanghai')
+  assert.equal(result.from, '2026-07-22')
+  assert.equal(result.through, '2026-08-20')
+  assert.equal(result.days.length, 30)
+  assert.deepEqual(result.days.at(-1), { date: '2026-08-20', actualCost: 1.25, requests: 12, totalTokens: 45_000 })
+  assert.deepEqual(result.days.at(-2), { date: '2026-08-19', actualCost: 0, requests: 0, totalTokens: 0 })
+  assert.deepEqual(result.days.at(-3), { date: '2026-08-18', actualCost: 0.0042, requests: 2, totalTokens: 320 })
+  assert.deepEqual(result.summary, { actualCost: 1.2542, requests: 14, totalTokens: 45_320 })
+  assert.equal(result.days.some((day) => day.date === '2026-06-01'), false)
+})
+
+test('history date boundaries use Shanghai midnight across year and leap-day rollovers', () => {
+  const beforeMidnight = normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [] }, { now: new Date('2026-12-31T15:59:59.999Z') })
+  const atMidnight = normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [] }, { now: new Date('2026-12-31T16:00:00.000Z') })
+  const leap = normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [] }, { now: new Date('2028-02-29T04:00:00.000Z') })
+  assert.equal(beforeMidnight.through, '2026-12-31')
+  assert.equal(atMidnight.through, '2027-01-01')
+  assert.equal(atMidnight.from, '2026-12-03')
+  assert.equal(leap.through, '2028-02-29')
+  assert.equal(leap.days.at(-2).date, '2028-02-28')
+})
+
+test('history rejects malformed, duplicate, unsafe, or excessive daily rows', () => {
+  const now = new Date(FIXED_TIME)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: null }, { now }), /每日使用记录/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [null] }, { now }), /每日记录无效/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [{ date: '2026-02-30', actual_cost: 1, requests: 1, total_tokens: 1 }] }, { now }), /daily_usage\.date/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [HISTORY.daily_usage[0], HISTORY.daily_usage[0]] }, { now }), /重复/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [{ date: '2026-08-20', actual_cost: -1, requests: 1, total_tokens: 1 }] }, { now }), /actual_cost/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [{ date: '2026-08-20', actual_cost: Number.MAX_VALUE, requests: 1, total_tokens: 1 }] }, { now }), /actual_cost/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: [{ date: '2026-08-20', actual_cost: 1, requests: 1.5, total_tokens: 1 }] }, { now }), /requests/)
+  assert.throws(() => normalizeSub2ApiHistory({ ...HISTORY, daily_usage: Array.from({ length: 367 }, () => ({ date: '2026-06-01' })) }, { now }), /过多/)
+})
+
 test('rejects malformed Sub2API responses and inconsistent limits', () => {
   assert.throws(() => normalizeSub2ApiUsage({ ...WALLET, isValid: false }), /无效/)
   assert.throws(() => normalizeSub2ApiUsage({ ...WALLET, remaining: -2, balance: -2 }), /remaining/)
@@ -306,6 +353,52 @@ test('reader uses selected provider, resolves credentials per operation, and exp
   assert.equal(first.displayName, CONFIG.displayName)
   assert.deepEqual(first, second)
   assert.equal(JSON.stringify(first).includes(TEST_SECRET), false)
+})
+
+test('history reader requests exactly 30 Shanghai days, normalizes only public aggregates, and single-flights', async () => {
+  let resolveFetch
+  let credentialReads = 0
+  let fetchReads = 0
+  const reader = createHistoryReader(readerOptions({
+    credentials: { resolve: async () => { credentialReads += 1; return { value: TEST_SECRET } } },
+    fetchImpl: async (url, init) => {
+      fetchReads += 1
+      assert.equal(url, `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai`)
+      assert.equal(init.headers.authorization, `Bearer ${TEST_SECRET}`)
+      assert.equal(init.redirect, 'error')
+      return new Promise((resolve) => { resolveFetch = resolve })
+    },
+  }))
+  const first = reader()
+  const duplicate = reader()
+  assert.equal(first, duplicate)
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(credentialReads, 1)
+  assert.equal(fetchReads, 1)
+  resolveFetch(new Response(JSON.stringify(HISTORY), { status: 200 }))
+  const result = await first
+  assert.equal(result.days.length, 30)
+  assert.deepEqual(result.summary, { actualCost: 1.2542, requests: 14, totalTokens: 45_320 })
+  assert.equal(JSON.stringify(result).includes(TEST_SECRET), false)
+  assert.equal(JSON.stringify(result).includes('model_stats'), false)
+})
+
+test('history reader preserves 404 fallback query parameters', async () => {
+  const urls = []
+  const reader = createHistoryReader(readerOptions({
+    fetchImpl: async (url) => {
+      urls.push(url)
+      return urls.length === 1
+        ? new Response('not found', { status: 404 })
+        : new Response(JSON.stringify(HISTORY), { status: 200 })
+    },
+  }))
+  assert.equal((await reader()).days.length, 30)
+  assert.deepEqual(urls, [
+    `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai`,
+    'https://relay.test.invalid/usage?days=30&timezone=Asia%2FShanghai',
+  ])
 })
 
 test('reader single-flights concurrent status requests', async () => {
@@ -488,6 +581,35 @@ test('status handler emits success, 405, same-origin checks, and sanitized error
   assert.equal(sameOrigin.statusCode, 200)
 
   const failure = await publicResponse(async () => { throw new Error(`sensitive-upstream-body-${TEST_SECRET}`) })
+  assert.equal(failure.statusCode, 500)
+  assert.equal(failure.body.includes(TEST_SECRET), false)
+})
+
+test('history handler remains direct-loopback-only and sanitizes failures', async () => {
+  const success = responseRecorder()
+  await createHistoryHandler(async () => normalizeSub2ApiHistory(HISTORY, { now: new Date(FIXED_TIME) }))({
+    method: 'GET', headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '127.0.0.1' },
+  }, success)
+  assert.equal(success.statusCode, 200)
+  assert.equal(JSON.parse(success.body).data.days.length, 30)
+
+  const remote = responseRecorder()
+  await createHistoryHandler(async () => null, { allowRemote: true })({
+    method: 'GET', headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '192.0.2.10' },
+  }, remote)
+  assert.equal(remote.statusCode, 403)
+
+  const method = responseRecorder()
+  await createHistoryHandler(async () => null)({
+    method: 'POST', headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '127.0.0.1' },
+  }, method)
+  assert.equal(method.statusCode, 405)
+  assert.equal(method.headers.allow, 'GET')
+
+  const failure = responseRecorder()
+  await createHistoryHandler(async () => { throw new Error(`sensitive-upstream-body-${TEST_SECRET}`) })({
+    method: 'GET', headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '127.0.0.1' },
+  }, failure)
   assert.equal(failure.statusCode, 500)
   assert.equal(failure.body.includes(TEST_SECRET), false)
 })
@@ -682,7 +804,7 @@ test('apply registers settings and all local routes', () => {
   assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }), /新 API Key/)
   assert.doesNotThrow(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs('https://different.test.invalid/v1')[0], usagePath: 'auto' }))
   assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs(TEST_BASE_URL)[0], usagePath: 'auto' }), /插件管理/)
-  assert.deepEqual(registered.map((route) => route.path), ['/relay-balance/status', '/relay-balance/test', '/relay-balance/save'])
+  assert.deepEqual(registered.map((route) => route.path), ['/relay-balance/status', '/relay-balance/history', '/relay-balance/test', '/relay-balance/save'])
   assert.ok(registered.every((route) => route.kind === 'exact'))
   assert.throws(() => createBalanceReader({ settings: {}, credentials: { resolve() {} } }), /settings\.get/)
   assert.throws(() => apply({ settings: { get() {}, register() {}, update() {} }, credentials: { resolve() {}, describe() {}, set() {}, unset() {} }, webServer: {} }, CONFIG), /webServer\.register/)

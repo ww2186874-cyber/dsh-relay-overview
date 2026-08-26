@@ -11,6 +11,9 @@
 ### 功能
 
 - 设置页只需填写 **中转 URL + API Key**，支持测试连接和测试后保存。
+- **中转余额**页显示最近 30 个北京时间自然日的每日实际扣费热力图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
+- 热力图采用周日在上的 GitHub 式 7 行布局，颜色跟随 DSH 主题强调色；悬停、聚焦或触屏点击某天可查看日期、扣费、请求数和 Token。
+- 插件不建立本地历史数据库，只请求并保留当前页面内的最近 30 天；更早数据直接裁掉，上游未返回的日期显示为 0。
 - API Key 由 DSH Credential 服务保存；设置页只显示是否已配置，永远不会读回已存密钥。
 - 展开侧栏只显示 `$剩余/$限额`、百分比和进度条；不显示站点名称或冗余说明。
 - 订阅接口同时提供到期时间和额度窗口起点时，鼠标悬停展开或折叠卡片任意位置都会立即在卡片右侧显示较大字体的 `剩余N天（YYYY/MM/DD HH:mm） DdHh后重置`，且不附加其他内容。
@@ -108,8 +111,8 @@ dsh --profile web --dump-config
 - 上游只允许 HTTPS，拒绝 URL userinfo、query 和 fragment；改变 URL 等同于改变 API Key 的接收方，因此保存前必须先测试连接。
 - 上游请求使用 `redirect: 'error'`，并防御性拒绝 `redirected` 和 HTTP 3xx。
 - 响应正文同时受 `Content-Length` 和实际流式字节数的 1 MiB 限制，使用严格 UTF-8 解码。
-- `/relay-balance/status` 默认只接受直接回环连接；`/relay-balance/test` 和会修改 Settings/Credential 的 `/relay-balance/save` 始终只接受直接回环 JSON POST。TCP peer 和 `Host` 都必须是 loopback，且请求不能携带常见代理转发头；同时拒绝跨站浏览器请求。
-- 这沿用 DSH rc.8 对本机 Web API 的信任边界，不是独立的用户认证系统，不能抵御已经能直接调用本机 DSH loopback API 的恶意进程。不要在不信任的多人系统账户中使用；本机反向代理也必须在代理层完成身份认证。`allowRemote: true` 只放宽状态接口，不会放宽测试或保存接口。
+- `/relay-balance/status` 默认只接受直接回环连接；包含每日费用/请求/Token 聚合的 `/relay-balance/history` 始终只接受直接回环连接；`/relay-balance/test` 和会修改 Settings/Credential 的 `/relay-balance/save` 始终只接受直接回环 JSON POST。TCP peer 和 `Host` 都必须是 loopback，且请求不能携带常见代理转发头；同时拒绝跨站浏览器请求。
+- 这沿用 DSH rc.8 对本机 Web API 的信任边界，不是独立的用户认证系统，不能抵御已经能直接调用本机 DSH loopback API 的恶意进程。不要在不信任的多人系统账户中使用；本机反向代理也必须在代理层完成身份认证。`allowRemote: true` 只放宽余额状态接口，不会放宽历史、测试或保存接口。
 - 公共错误经过脱敏，不回传上游正文或原始异常。
 
 ### 支持的 Sub2API 数据形状
@@ -123,6 +126,9 @@ dsh --profile web --dump-config
 - `subscription.expires_at`, `subscription.weekly_window_start`, `subscription.monthly_window_start`
 - `balance` / `remaining`
 - `usage.total.actual_cost`
+- `daily_usage[].date/actual_cost/requests/total_tokens`（设置页近 30 天热力图）
+
+历史查询固定使用 `days=30&timezone=Asia/Shanghai`。Host 只向浏览器返回经过验证的每日聚合和 30 天汇总，不返回 `model_stats`、原始响应或逐请求记录。
 
 不同 Fork 可能修改接口；请提交一个经过脱敏的响应字段结构和版本信息，而不是提交真实 Key 或完整敏感正文。
 
@@ -150,7 +156,7 @@ pnpm pack --dry-run
 1. 展开侧栏中 Relay 是完整的 footer row；
 2. 折叠侧栏中 Relay、Cordis 和 Settings 仍纵向排列；
 3. 点击、分钟、可见性和超时刷新正常；
-4. `/relay-balance/status` 只返回归一化后的公开字段。
+4. `/relay-balance/status` 与 `/relay-balance/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天。
 
 组件使用公开 Slot `sidebar.footer.action` 和 owner prop `wide`。两条窄范围的 `:has()` 兼容规则只依赖公开 `data-slot` 标记，用于适配 rc.8 的 `display: contents` Slot wrapper。
 
@@ -176,7 +182,7 @@ A permanent DSH Web Profile sidebar quota indicator. The package has a generic *
 
 ### Configure
 
-Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
+Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The page includes a theme-aware GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with 30-day cost, request, and token aggregates. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
 
 ### Install
 
@@ -221,7 +227,7 @@ Restart the existing DSH Web process after installation; settings changes apply 
 
 A newly typed key crosses the same-origin Host wire only in a test/save request, then the password draft is cleared. The Host performs credential staging and the revision-fenced Settings switch; stored keys are never read back by the browser and are resolved on the Host for every real upstream query. Upstream URLs must use HTTPS; redirects are rejected; response bodies are limited to 1 MiB and decoded as strict UTF-8. Public errors are sanitized.
 
-By default the status route accepts only direct loopback requests. The test and settings/credential-mutating save routes always require a loopback peer and Host, no common proxy-forwarding headers, and no cross-site browser signal. This follows the DSH rc.8 local Web API trust boundary; it is not separate user authentication and does not defend against a malicious process that can directly call the local DSH loopback API. A local reverse proxy therefore counts as remote deployment and must enforce authentication. `allowRemote: true` relaxes only the status route, never test or save.
+By default the status route accepts only direct loopback requests. The history route always remains loopback-only because it carries daily cost/request/token aggregates. The test and settings/credential-mutating save routes always require a loopback peer and Host, no common proxy-forwarding headers, and no cross-site browser signal. This follows the DSH rc.8 local Web API trust boundary; it is not separate user authentication and does not defend against a malicious process that can directly call the local DSH loopback API. A local reverse proxy therefore counts as remote deployment and must enforce authentication. `allowRemote: true` relaxes only the balance status route, never history, test, or save.
 
 ### Development
 

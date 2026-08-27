@@ -447,6 +447,8 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(source, /grid-template-rows:repeat\(7,24px\)/)
   assert.match(source, /grid-auto-columns:24px/)
   assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
+  assert.match(source, /--relay-history-accent:#3b82f6/)
+  assert.match(source, /background:color-mix\(in srgb,var\(--relay-history-accent\) 16%,/)
 })
 
 test('subscription timing text contains only expiry and reset information', () => {

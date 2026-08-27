@@ -481,7 +481,7 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
   assert.match(source, /--relay-history-accent:#3b82f6/)
   assert.match(source, /border-radius:3px;background:var\(--dsw-alias-border-l1\)/)
-  assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:/)
+  assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:[^}]+align-items:start/)
   assert.match(source, /@media \(max-width:620px\)\{\.relay-history__content\{grid-template-columns:1fr/)
 })
 
@@ -491,9 +491,10 @@ test('model usage donut renders top five plus other with accessible pointer, tou
   const donut = renderModelUsage(usage, {
     onDetailEvent: (action, _event, key, title, detail) => events.push({ action, key, title, detail }),
   })
-  assert.equal(donut.props['aria-labelledby'], donut.children[0].props.id)
-  assert.equal(donut.children[0].children[0], '模型调用量')
-  const body = donut.children[1]
+  assert.equal(donut.props['aria-label'], '模型调用量')
+  assert.equal(donut.props['aria-labelledby'], undefined)
+  assert.equal(donut.children.some((child) => child?.type === 'h4'), false)
+  const body = donut.children[0]
   const chart = body.children[0]
   const svg = chart.children[0]
   assert.equal(svg.props['aria-hidden'], 'true')
@@ -525,16 +526,19 @@ test('model usage donut renders top five plus other with accessible pointer, tou
   assert.equal(stopped, true)
 
   const one = renderModelUsage({ totalRequests: 1_000_001, models: [{ model: 'dominant', requests: 1_000_000 }], otherRequests: 1 })
-  const oneSegments = one.children[1].children[0].children[0].children[1]
+  const oneSegments = one.children[0].children[0].children[0].children[1]
   assert.match(oneSegments[0].props.style.strokeDasharray, /^99\.9999/)
-  assert.match(one.children[1].children[1].children[0][1].children[0].props['aria-label'], /占 <0\.1%/)
+  assert.match(one.children[0].children[1].children[0][1].children[0].props['aria-label'], /占 <0\.1%/)
   const single = renderModelUsage({ totalRequests: 1, models: [{ model: 'only', requests: 1 }], otherRequests: 0 })
-  assert.equal(single.children[1].children[0].children[0].children[1][0].props.style.strokeDasharray, '100 0')
+  assert.equal(single.children[0].children[0].children[0].children[1][0].props.style.strokeDasharray, '100 0')
 
   const unavailable = renderModelUsage(null)
-  assert.equal(unavailable.children[1].children[0], '中转站未提供模型统计')
+  assert.equal(unavailable.children[0].children[0], '中转站未提供模型统计')
   const empty = renderModelUsage({ totalRequests: 0, models: [], otherRequests: 0 })
-  assert.equal(empty.children[1].children[0], '近 30 天暂无模型调用')
+  assert.equal(empty.children[0].children[0], '近 30 天暂无模型调用')
+  assert.match(source, /\.relay-model\{[^}]+min-height:168px[^}]+justify-content:flex-start/)
+  assert.match(source, /\.relay-model__body\{[^}]+align-items:start/)
+  assert.doesNotMatch(source, /\.relay-model h4\{/)
   assert.match(source, /\.relay-model__segment--1\{stroke:#3b82f6\}/)
   assert.match(source, /\.relay-model__segment--6\{stroke:#64748b\}/)
   assert.match(source, /\.relay-model__legend-button:focus-visible\{outline:2px solid var\(--relay-history-accent\)/)

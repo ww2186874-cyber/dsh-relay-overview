@@ -481,7 +481,8 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
   assert.match(source, /--relay-history-accent:#3b82f6/)
   assert.match(source, /border-radius:3px;background:var\(--dsw-alias-border-l1\)/)
-  assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:[^}]+align-items:center/)
+  assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:[^}]+align-items:center;gap:16px/)
+  assert.match(source, /\.relay-history__calendar\{[^}]+justify-content:center/)
   assert.match(source, /@media \(max-width:620px\)\{\.relay-history__content\{grid-template-columns:1fr/)
 })
 

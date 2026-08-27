@@ -15,6 +15,7 @@ import {
   normalizePluginConfig,
   normalizeRelaySettings,
   normalizeSub2ApiHistory,
+  normalizeSub2ApiModelUsage,
   normalizeSub2ApiUsage,
   resolveRelayConfig,
 } from '../lib/index.js'
@@ -48,6 +49,15 @@ const HISTORY = {
     { date: '2026-08-20', actual_cost: 1.25, requests: 12, total_tokens: 45_000 },
     { date: '2026-08-18', actual_cost: 0.0042, requests: 2, total_tokens: 320 },
     { date: '2026-06-01', actual_cost: 999, requests: 999, total_tokens: 999 },
+  ],
+  model_stats: [
+    { model: 'claude-sonnet-4-6', requests: 6, total_tokens: 40_000, actual_cost: 900, account_cost: 800 },
+    { model: 'gpt-5', requests: 2, total_tokens: 2_000, actual_cost: 700, account_cost: 600 },
+    { model: 'gemini-2.5-pro', requests: 2, total_tokens: 1_000, actual_cost: 500, account_cost: 400 },
+    { model: 'deepseek-v3', requests: 1, total_tokens: 800, actual_cost: 300, account_cost: 200 },
+    { model: 'grok-4', requests: 1, total_tokens: 700, actual_cost: 200, account_cost: 100 },
+    { model: 'qwen3-coder', requests: 1, total_tokens: 600, actual_cost: 100, account_cost: 50 },
+    { model: 'gpt-5', requests: 1, total_tokens: 220, actual_cost: 50, account_cost: 25 },
   ],
 }
 
@@ -272,7 +282,48 @@ test('normalizes sparse history into exactly 30 Shanghai calendar days and disca
   assert.deepEqual(result.days.at(-2), { date: '2026-08-19', actualCost: 0, requests: 0, totalTokens: 0 })
   assert.deepEqual(result.days.at(-3), { date: '2026-08-18', actualCost: 0.0042, requests: 2, totalTokens: 320 })
   assert.deepEqual(result.summary, { actualCost: 1.2542, requests: 14, totalTokens: 45_320 })
+  assert.deepEqual(result.modelUsage, {
+    totalRequests: 14,
+    models: [
+      { model: 'claude-sonnet-4-6', requests: 6 },
+      { model: 'gpt-5', requests: 3 },
+      { model: 'gemini-2.5-pro', requests: 2 },
+      { model: 'deepseek-v3', requests: 1 },
+      { model: 'grok-4', requests: 1 },
+    ],
+    otherRequests: 1,
+  })
   assert.equal(result.days.some((day) => day.date === '2026-06-01'), false)
+  const text = JSON.stringify(result)
+  assert.equal(text.includes('model_stats'), false)
+  assert.equal(text.includes('account_cost'), false)
+  assert.equal(text.includes('total_tokens'), false)
+  assert.equal(text.includes('actual_cost'), false)
+})
+
+test('model usage aggregation is optional, deterministic, bounded, and rejects unsafe rows', () => {
+  assert.equal(normalizeSub2ApiModelUsage(undefined), null)
+  assert.deepEqual(normalizeSub2ApiModelUsage([]), { totalRequests: 0, models: [], otherRequests: 0 })
+  assert.equal(normalizeSub2ApiModelUsage([{ model: 'bad', requests: -1 }]), null)
+  assert.equal(normalizeSub2ApiModelUsage([{ model: 'bad', requests: Number.MAX_SAFE_INTEGER + 1 }]), null)
+  assert.equal(normalizeSub2ApiModelUsage([{ model: 'bad\nname', requests: 1 }]), null)
+  assert.equal(normalizeSub2ApiModelUsage([{ model: 'x'.repeat(161), requests: 1 }]), null)
+  assert.equal(normalizeSub2ApiModelUsage(Array.from({ length: 501 }, (_, index) => ({ model: `m${index}`, requests: 1 }))), null)
+  const bounded = normalizeSub2ApiModelUsage(Array.from({ length: 500 }, (_, index) => ({ model: `m${String(index).padStart(3, '0')}`, requests: 1 })))
+  assert.deepEqual(bounded.models.map((entry) => entry.model), ['m000', 'm001', 'm002', 'm003', 'm004'])
+  assert.equal(bounded.totalRequests, 500)
+  assert.equal(bounded.otherRequests, 495)
+  assert.deepEqual(normalizeSub2ApiModelUsage([{ model: ' same ', requests: 1 }, { model: 'same', requests: 2 }]), {
+    totalRequests: 3, models: [{ model: 'same', requests: 3 }], otherRequests: 0,
+  })
+  assert.equal(normalizeSub2ApiModelUsage([
+    { model: 'same', requests: Number.MAX_SAFE_INTEGER },
+    { model: 'same', requests: 1 },
+  ]), null)
+  assert.equal(normalizeSub2ApiModelUsage([
+    { model: 'first', requests: Number.MAX_SAFE_INTEGER },
+    { model: 'second', requests: 1 },
+  ]), null)
 })
 
 test('history date boundaries use Shanghai midnight across year and leap-day rollovers', () => {
@@ -363,7 +414,7 @@ test('history reader requests exactly 30 Shanghai days, normalizes only public a
     credentials: { resolve: async () => { credentialReads += 1; return { value: TEST_SECRET } } },
     fetchImpl: async (url, init) => {
       fetchReads += 1
-      assert.equal(url, `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai`)
+      assert.equal(url, `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai&start_date=2026-07-22&end_date=2026-08-20`)
       assert.equal(init.headers.authorization, `Bearer ${TEST_SECRET}`)
       assert.equal(init.redirect, 'error')
       return new Promise((resolve) => { resolveFetch = resolve })
@@ -396,8 +447,8 @@ test('history reader preserves 404 fallback query parameters', async () => {
   }))
   assert.equal((await reader()).days.length, 30)
   assert.deepEqual(urls, [
-    `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai`,
-    'https://relay.test.invalid/usage?days=30&timezone=Asia%2FShanghai',
+    `${TEST_BASE_URL}/usage?days=30&timezone=Asia%2FShanghai&start_date=2026-07-22&end_date=2026-08-20`,
+    'https://relay.test.invalid/usage?days=30&timezone=Asia%2FShanghai&start_date=2026-07-22&end_date=2026-08-20',
   ])
 })
 
@@ -591,7 +642,13 @@ test('history handler remains direct-loopback-only and sanitizes failures', asyn
     method: 'GET', headers: { host: '127.0.0.1:3080' }, socket: { remoteAddress: '127.0.0.1' },
   }, success)
   assert.equal(success.statusCode, 200)
-  assert.equal(JSON.parse(success.body).data.days.length, 30)
+  const publicHistory = JSON.parse(success.body).data
+  assert.equal(publicHistory.days.length, 30)
+  assert.deepEqual(Object.keys(publicHistory).sort(), ['adapter', 'days', 'fetchedAt', 'from', 'modelUsage', 'summary', 'through', 'timeZone', 'unit'].sort())
+  assert.deepEqual(Object.keys(publicHistory.modelUsage).sort(), ['models', 'otherRequests', 'totalRequests'].sort())
+  assert.equal(publicHistory.modelUsage.models.every((entry) => Object.keys(entry).sort().join(',') === 'model,requests'), true)
+  assert.equal(success.body.includes('account_cost'), false)
+  assert.equal(success.body.includes('actual_cost'), false)
 
   const remote = responseRecorder()
   await createHistoryHandler(async () => null, { allowRemote: true })({

@@ -11,8 +11,9 @@
 ### 功能
 
 - 设置页只需填写 **中转 URL + API Key**，支持测试连接和测试后保存。
-- **中转余额**页显示最近 30 个北京时间自然日的每日实际扣费热力图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
+- **中转余额**页显示最近 30 个北京时间自然日的每日实际扣费热力图、模型调用量环形图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
 - 热力图采用周日在上的 GitHub 式 7 行布局；零用量显示主题自适应的中性灰，有用量按四档蓝色色阶逐级加深。悬停、聚焦或触屏点击某天可查看日期、扣费、请求数和 Token。
+- 右侧环形图按调用次数显示前 5 个模型，其余合并为“其他模型”；中心显示模型统计总调用数，图例和交互提示显示模型、调用次数及占比。窄屏时图表自动排列到热力图下方。
 - 插件不建立本地历史数据库，只请求并保留当前页面内的最近 30 天；更早数据直接裁掉，上游未返回的日期显示为 0。
 - API Key 由 DSH Credential 服务保存；设置页只显示是否已配置，永远不会读回已存密钥。
 - 展开侧栏只显示 `$剩余/$限额`、百分比和进度条；不显示站点名称或冗余说明。
@@ -127,8 +128,9 @@ dsh --profile web --dump-config
 - `balance` / `remaining`
 - `usage.total.actual_cost`
 - `daily_usage[].date/actual_cost/requests/total_tokens`（设置页近 30 天热力图）
+- `model_stats[].model/requests`（设置页前 5 名＋其他模型调用量）
 
-历史查询固定使用 `days=30&timezone=Asia/Shanghai`。Host 只向浏览器返回经过验证的每日聚合和 30 天汇总，不返回 `model_stats`、原始响应或逐请求记录。
+历史查询固定使用 `days=30&timezone=Asia/Shanghai`，并把相同的 30 个起止日期作为 `start_date` 与 `end_date` 传给模型统计。Sub2API 当前只对 `daily_usage` 应用 `timezone` 参数；`model_stats` 的日期边界由中转站服务器配置时区解释，因此非 `Asia/Shanghai` 部署的模型统计绝对时间边界可能与每日热力图略有偏差。Host 只向浏览器返回经过验证的每日聚合、30 天汇总，以及白名单化的模型名与调用次数；不会转发原始 `model_stats`、模型 Token/成本、`account_cost`、原始响应或逐请求记录。模型统计缺失或不兼容时，热力图仍可独立显示。
 
 不同 Fork 可能修改接口；请提交一个经过脱敏的响应字段结构和版本信息，而不是提交真实 Key 或完整敏感正文。
 
@@ -156,7 +158,7 @@ pnpm pack --dry-run
 1. 展开侧栏中 Relay 是完整的 footer row；
 2. 折叠侧栏中 Relay、Cordis 和 Settings 仍纵向排列；
 3. 点击、分钟、可见性和超时刷新正常；
-4. `/relay-balance/status` 与 `/relay-balance/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天。
+4. `/relay-balance/status` 与 `/relay-balance/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天，模型环形图仍只接收模型名和调用次数。
 
 组件使用公开 Slot `sidebar.footer.action` 和 owner prop `wide`。两条窄范围的 `:has()` 兼容规则只依赖公开 `data-slot` 标记，用于适配 rc.8 的 `display: contents` Slot wrapper。
 
@@ -182,7 +184,7 @@ A permanent DSH Web Profile sidebar quota indicator. The package has a generic *
 
 ### Configure
 
-Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels, together with 30-day cost, request, and token aggregates. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
+Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A responsive donut chart shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
 
 ### Install
 

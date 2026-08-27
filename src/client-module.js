@@ -61,6 +61,41 @@ function historyDateText(value) {
   return match === null ? value : `${match[1]}年${Number(match[2])}月${Number(match[3])}日`
 }
 
+function decodeModelUsage(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object' || !Number.isSafeInteger(value.totalRequests) || value.totalRequests < 0
+    || !Array.isArray(value.models) || value.models.length > 5
+    || !Number.isSafeInteger(value.otherRequests) || value.otherRequests < 0) {
+    throw new Error('模型调用数据无效')
+  }
+  const names = new Set()
+  const models = value.models.map((entry) => {
+    const model = typeof entry?.model === 'string' ? entry.model : ''
+    if (model === '' || model.length > 160 || /[\u0000-\u001f\u007f-\u009f]/.test(model) || names.has(model)
+      || !Number.isSafeInteger(entry.requests) || entry.requests <= 0) {
+      throw new Error('模型调用数据无效')
+    }
+    names.add(model)
+    return { model, requests: entry.requests }
+  })
+  const represented = models.reduce((total, entry) => total + entry.requests, value.otherRequests)
+  if (!Number.isSafeInteger(represented) || represented !== value.totalRequests) throw new Error('模型调用数据无效')
+  return { totalRequests: value.totalRequests, models, otherRequests: value.otherRequests }
+}
+
+function modelUsageSlices(usage) {
+  if (usage === null || usage.totalRequests <= 0) return []
+  const slices = usage.models.map((entry, index) => ({ key: `model-${index}`, label: entry.model, requests: entry.requests }))
+  if (usage.otherRequests > 0) slices.push({ key: 'other', label: '其他模型', requests: usage.otherRequests })
+  let offset = 0
+  return slices.map((entry) => {
+    const percentage = entry.requests / usage.totalRequests * 100
+    const result = { ...entry, percentage, offset }
+    offset += percentage
+    return result
+  })
+}
+
 function decodeHistoryData(value) {
   if (typeof value !== 'object' || value === null || value.timeZone !== 'Asia/Shanghai' || !Array.isArray(value.days) || value.days.length !== HISTORY_DAYS) {
     throw new Error('每日使用数据无效')
@@ -96,6 +131,7 @@ function decodeHistoryData(value) {
     through: value.through,
     days,
     summary,
+    modelUsage: (() => { try { return decodeModelUsage(value.modelUsage) } catch { return null } })(),
     fetchedAt: typeof value.fetchedAt === 'string' ? value.fetchedAt : '',
   }
 }
@@ -385,11 +421,101 @@ async function callRelayConnection(fetchImpl, route, input, signal) {
   return body.data
 }
 
+function modelPercentageText(value) {
+  if (!Number.isFinite(value) || value <= 0) return '0%'
+  if (value < 0.1) return '<0.1%'
+  return `${trimDecimal(value, value >= 10 ? 0 : 1)}%`
+}
+
+function detailEventProps(onDetailEvent, key, title, detail, focusable) {
+  if (typeof onDetailEvent !== 'function') return {}
+  const pointerEnter = (event) => {
+    if (event.pointerType !== 'touch') onDetailEvent('show', event, key, title, detail)
+  }
+  const pointerLeave = (event) => {
+    if (event.pointerType !== 'touch') onDetailEvent('hide', event, key, title, detail)
+  }
+  const pointerDown = (event) => {
+    event.stopPropagation()
+    if (event.pointerType !== 'touch') return
+    event.preventDefault()
+    onDetailEvent('toggle', event, key, title, detail)
+  }
+  return {
+    onPointerEnter: pointerEnter,
+    onPointerLeave: pointerLeave,
+    onPointerDown: pointerDown,
+    ...(focusable ? {
+      onFocus: (event) => onDetailEvent('show', event, key, title, detail),
+      onBlur: (event) => onDetailEvent('hide', event, key, title, detail),
+    } : {}),
+  }
+}
+
+function ModelUsageDonut({ usage, loading = false, onDetailEvent = null }) {
+  const titleId = React.useId()
+  const title = React.createElement('h4', { id: titleId }, '模型调用量')
+  if (loading) {
+    return React.createElement('section', { className: 'relay-model is-loading', 'aria-labelledby': titleId },
+      title,
+      React.createElement('div', { className: 'relay-model__empty', role: 'status' }, '正在加载模型统计…'))
+  }
+  if (usage === null || usage.totalRequests <= 0) {
+    return React.createElement('section', { className: 'relay-model is-empty', 'aria-labelledby': titleId },
+      title,
+      React.createElement('div', { className: 'relay-model__empty' }, usage === null ? '中转站未提供模型统计' : '近 30 天暂无模型调用'))
+  }
+  const slices = modelUsageSlices(usage)
+  const segments = slices.map((slice, index) => {
+    const percentage = modelPercentageText(slice.percentage)
+    const tooltipDetail = `${slice.requests.toLocaleString('en-US')} 次调用 · ${percentage}`
+    return React.createElement('circle', {
+      key: slice.key,
+      className: `relay-model__segment relay-model__segment--${index + 1}`,
+      cx: 21,
+      cy: 21,
+      r: 15.9155,
+      pathLength: 100,
+      transform: 'rotate(-90 21 21)',
+      style: { strokeDasharray: `${slice.percentage} ${100 - slice.percentage}`, strokeDashoffset: slice.offset === 0 ? 0 : -slice.offset },
+      ...detailEventProps(onDetailEvent, slice.key, slice.label, tooltipDetail, false),
+    })
+  })
+  const legend = slices.map((slice, index) => {
+    const percentage = modelPercentageText(slice.percentage)
+    const accessibleDetail = `${slice.label}，${slice.requests.toLocaleString('en-US')} 次调用，占 ${percentage}`
+    const tooltipDetail = `${slice.requests.toLocaleString('en-US')} 次调用 · ${percentage}`
+    return React.createElement('li', { key: slice.key },
+      React.createElement('button', {
+        type: 'button',
+        className: 'relay-model__legend-button',
+        'aria-label': accessibleDetail,
+        ...detailEventProps(onDetailEvent, slice.key, slice.label, tooltipDetail, true),
+      },
+      React.createElement('span', { className: `relay-model__swatch relay-model__swatch--${index + 1}`, 'aria-hidden': 'true' }),
+      React.createElement('span', { className: 'relay-model__name' }, slice.label),
+      React.createElement('span', { className: 'relay-model__value' }, `${compactMetric(slice.requests)} · ${percentage}`)))
+  })
+  return React.createElement('section', { className: 'relay-model', 'aria-labelledby': titleId },
+    title,
+    React.createElement('div', { className: 'relay-model__body' },
+      React.createElement('div', { className: 'relay-model__chart' },
+        React.createElement('svg', { viewBox: '0 0 42 42', 'aria-hidden': 'true', focusable: 'false' },
+          React.createElement('circle', { className: 'relay-model__track', cx: 21, cy: 21, r: 15.9155, pathLength: 100, 'aria-hidden': 'true' }),
+          segments),
+        React.createElement('span', { className: 'relay-model__center', 'aria-hidden': 'true' },
+          React.createElement('strong', null, compactMetric(usage.totalRequests)),
+          React.createElement('small', null, '次调用'))),
+      React.createElement('ol', { className: 'relay-model__legend', 'aria-label': '模型调用量明细' }, legend)))
+}
+
 function DailyUsageHeatmap({ enabled }) {
+  const titleId = React.useId()
   const [state, setState] = React.useState({ data: null, loading: enabled, error: null })
   const mounted = React.useRef(false)
   const manager = React.useRef(null)
   const tooltip = React.useRef(null)
+  const tooltipTarget = React.useRef(null)
 
   if (manager.current === null) {
     manager.current = createHistoryRequestManager({
@@ -412,26 +538,39 @@ function DailyUsageHeatmap({ enabled }) {
   const hideTooltip = React.useCallback(() => {
     tooltip.current?.remove()
     tooltip.current = null
+    tooltipTarget.current = null
   }, [])
-  const showTooltip = React.useCallback((event, day) => {
+  const showDetailTooltip = React.useCallback((event, key, title, detail) => {
     hideTooltip()
     const tag = document.createElement('div')
     tag.className = 'relay-history__tooltip'
     tag.setAttribute('aria-hidden', 'true')
-    const dateLine = document.createElement('strong')
-    dateLine.textContent = historyDateText(day.date)
+    const titleLine = document.createElement('strong')
+    titleLine.textContent = title
     const detailLine = document.createElement('span')
-    detailLine.textContent = `${historyMoney(day.actualCost, state.data?.unit || 'USD')} · ${day.requests.toLocaleString('en-US')} 次 · ${compactMetric(day.totalTokens)} Token`
-    tag.append(dateLine, detailLine)
+    detailLine.textContent = detail
+    tag.append(titleLine, detailLine)
     document.body.appendChild(tag)
-    const cellRect = event.currentTarget.getBoundingClientRect()
+    const targetRect = event.currentTarget.getBoundingClientRect()
     const tooltipRect = tag.getBoundingClientRect()
-    const position = heatmapTooltipPosition(cellRect, tooltipRect, { width: window.innerWidth, height: window.innerHeight })
+    const position = heatmapTooltipPosition(targetRect, tooltipRect, { width: window.innerWidth, height: window.innerHeight })
     tag.style.left = `${position.left}px`
     tag.style.top = `${position.top}px`
     tag.dataset.visible = 'true'
     tooltip.current = tag
-  }, [hideTooltip, state.data?.unit])
+    tooltipTarget.current = key
+  }, [hideTooltip])
+  const handleDetailEvent = React.useCallback((action, event, key, title, detail) => {
+    if (action === 'hide') {
+      if (tooltipTarget.current === key) hideTooltip()
+      return
+    }
+    if (action === 'toggle' && tooltipTarget.current === key) {
+      hideTooltip()
+      return
+    }
+    showDetailTooltip(event, key, title, detail)
+  }, [hideTooltip, showDetailTooltip])
   const refresh = React.useCallback(() => enabled ? manager.current.refresh() : Promise.resolve(null), [enabled])
   React.useEffect(() => {
     mounted.current = true
@@ -475,17 +614,14 @@ function DailyUsageHeatmap({ enabled }) {
       cells.push(React.createElement('span', { key: `leading-${index}`, className: 'relay-history__blank', 'aria-hidden': 'true' }))
     }
     for (const day of data.days) {
-      const detail = `${historyDateText(day.date)}，扣费 ${historyMoney(day.actualCost, data.unit)}，${day.requests.toLocaleString('en-US')} 次请求，${compactMetric(day.totalTokens)} Token`
+      const accessibleDetail = `${historyDateText(day.date)}，扣费 ${historyMoney(day.actualCost, data.unit)}，${day.requests.toLocaleString('en-US')} 次请求，${compactMetric(day.totalTokens)} Token`
+      const tooltipDetail = `${historyMoney(day.actualCost, data.unit)} · ${day.requests.toLocaleString('en-US')} 次 · ${compactMetric(day.totalTokens)} Token`
       cells.push(React.createElement('button', {
         key: day.date,
         type: 'button',
         className: `relay-history__day relay-history__day--${heatLevel(day.actualCost, scale)}${day.date === data.through ? ' is-today' : ''}`,
-        'aria-label': detail,
-        onMouseEnter: (event) => showTooltip(event, day),
-        onMouseLeave: hideTooltip,
-        onFocus: (event) => showTooltip(event, day),
-        onBlur: hideTooltip,
-        onClick: (event) => showTooltip(event, day),
+        'aria-label': accessibleDetail,
+        ...detailEventProps(handleDetailEvent, `day-${day.date}`, historyDateText(day.date), tooltipDetail, true),
       }))
     }
   } else if (state.loading) {
@@ -494,9 +630,9 @@ function DailyUsageHeatmap({ enabled }) {
     }
   }
 
-  return React.createElement('section', { className: `relay-history${state.loading ? ' is-loading' : ''}`, 'aria-labelledby': 'relay-history-title' },
+  return React.createElement('section', { className: `relay-history${state.loading ? ' is-loading' : ''}`, 'aria-labelledby': titleId },
     React.createElement('header', { className: 'relay-history__header' },
-      React.createElement('h3', { id: 'relay-history-title' }, '近 30 天使用情况'),
+      React.createElement('h3', { id: titleId }, '近 30 天使用情况'),
       React.createElement('div', { className: 'relay-history__summary' },
         React.createElement('span', null, summaryText),
         React.createElement('button', {
@@ -507,7 +643,14 @@ function DailyUsageHeatmap({ enabled }) {
           onClick: refresh,
         }, '↻'))),
     cells.length > 0
-      ? React.createElement('div', { className: 'relay-history__grid', role: 'group', 'aria-label': '最近 30 天每日实际扣费热力图' }, cells)
+      ? React.createElement('div', { className: 'relay-history__content' },
+        React.createElement('div', { className: 'relay-history__calendar' },
+          React.createElement('div', { className: 'relay-history__grid', role: 'group', 'aria-label': '最近 30 天每日实际扣费热力图' }, cells)),
+        React.createElement(ModelUsageDonut, {
+          usage: data?.modelUsage ?? null,
+          loading: state.loading && data === null,
+          onDetailEvent: handleDetailEvent,
+        }))
       : React.createElement('p', { className: 'relay-history__empty' }, enabled ? '暂时没有可显示的每日使用数据。' : '保存中转 URL 和 API Key 后即可查看。'),
     state.error !== null ? React.createElement('p', { className: 'relay-history__error', role: 'status' }, state.error) : null)
 }
@@ -745,11 +888,14 @@ const css = `
 .relay-balance__warning{position:absolute;right:1px;top:0;width:12px;height:12px;border-radius:50%;background:var(--dsw-specific-sidebar-fill);font-size:9px;line-height:12px;text-align:center}
 .relay-settings{box-sizing:border-box;max-width:680px;color:var(--dsw-alias-label-primary);display:flex;flex-direction:column;gap:18px}.relay-settings__header{display:flex;flex-direction:column;gap:4px}.relay-settings__header h2{margin:0;font-size:18px;line-height:26px}.relay-settings__header p{margin:0;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}.relay-settings__field{display:flex;flex-direction:column;gap:7px;font-size:13px;font-weight:600}.relay-settings__field input{box-sizing:border-box;width:100%;height:38px;border:1px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-weight:400;padding:0 11px;outline:none}.relay-settings__field input:focus{border-color:var(--dsw-alias-state-business-primary,#3b82f6);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-state-business-primary,#3b82f6) 20%,transparent)}.relay-settings__field small{color:var(--dsw-alias-label-tertiary);font-size:12px;font-weight:400;line-height:18px}.relay-settings__actions{display:flex;justify-content:flex-end;gap:8px}.relay-settings__actions button{height:36px;border:0;border-radius:18px;cursor:pointer;font:inherit;padding:0 16px}.relay-settings__actions button:disabled{cursor:not-allowed;opacity:.55}.relay-settings__primary{background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground)}.relay-settings__secondary{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.relay-settings__notice,.relay-settings__readonly{margin:0;font-size:12px;line-height:18px}.relay-settings__notice.is-success{color:var(--dsw-alias-state-success-primary,#22a06b)}.relay-settings__notice.is-error,.relay-settings__readonly{color:var(--dsw-alias-state-error-primary,#df4b4b)}
 .relay-history{--relay-history-accent:#3b82f6;box-sizing:border-box;min-height:178px;padding:16px;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;background:var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base));display:flex;flex-direction:column;gap:14px}.relay-history__header{display:flex;align-items:center;gap:12px;min-width:0}.relay-history__header h3{margin:0;flex:none;color:var(--dsw-alias-label-primary);font-size:14px;line-height:22px;font-weight:650}.relay-history__summary{margin-left:auto;min-width:0;display:flex;align-items:center;gap:8px;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-tertiary));font-size:12px;line-height:18px;font-variant-numeric:tabular-nums}.relay-history__summary>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.relay-history__refresh{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-tertiary));font:600 17px/1 system-ui,sans-serif;cursor:pointer;transition:background .16s ease,color .16s ease,transform .2s ease}.relay-history__refresh:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}.relay-history__refresh:focus-visible,.relay-history__day:focus-visible{outline:2px solid var(--relay-history-accent);outline-offset:2px}.relay-history__refresh:disabled{cursor:wait;opacity:.55}.relay-history.is-loading .relay-history__refresh{transform:rotate(90deg)}
-.relay-history__grid{display:grid;grid-template-rows:repeat(7,24px);grid-auto-flow:column;grid-auto-columns:24px;width:max-content;max-width:100%}.relay-history__day,.relay-history__blank{box-sizing:border-box;width:24px;height:24px}.relay-history__blank{display:block}.relay-history__day{appearance:none;padding:0;border:0;background:transparent;cursor:default;display:grid;place-items:center}.relay-history__day::before{content:"";box-sizing:border-box;width:16px;height:16px;border:1px solid transparent;border-radius:3px;background:var(--dsw-alias-border-l1);transition:transform .12s ease,box-shadow .12s ease,background .16s ease}.relay-history__day:hover::before,.relay-history__day:focus-visible::before{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.18)}.relay-history__day--1::before{background:color-mix(in srgb,var(--relay-history-accent) 34%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--2::before{background:color-mix(in srgb,var(--relay-history-accent) 52%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--3::before{background:color-mix(in srgb,var(--relay-history-accent) 72%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--4::before{background:color-mix(in srgb,var(--relay-history-accent) 92%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day.is-today::before{border-color:var(--relay-history-accent);box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base)),0 0 0 2px var(--relay-history-accent)}.relay-history__day--loading::before{border:0;animation:relay-history-pulse 1.2s ease-in-out infinite alternate}.relay-history__error,.relay-history__empty{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}.relay-history__error{color:var(--dsw-alias-state-error-primary,#df4b4b)}.relay-history__tooltip{position:fixed;z-index:1001;box-sizing:border-box;width:max-content;max-width:calc(100vw - 16px);padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#202124;color:#fff;font:500 12px/18px var(--dsw-font-family,system-ui,sans-serif);box-shadow:0 6px 18px rgba(0,0,0,.32);pointer-events:none;opacity:0;transform:translateY(2px);transition:opacity .1s ease,transform .1s ease}.relay-history__tooltip strong,.relay-history__tooltip span{display:block}.relay-history__tooltip strong{font-size:12px;font-weight:650}.relay-history__tooltip span{color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums}.relay-history__tooltip[data-visible="true"]{opacity:1;transform:translateY(0)}
-@keyframes relay-history-pulse{from{background:color-mix(in srgb,var(--relay-history-accent) 12%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}to{background:color-mix(in srgb,var(--relay-history-accent) 32%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}}
+.relay-history__content{display:grid;grid-template-columns:minmax(144px,auto) minmax(0,1fr);align-items:center;gap:28px;min-height:168px}.relay-history__calendar{min-width:144px;display:flex;align-items:center;justify-content:flex-start}.relay-history__grid{display:grid;grid-template-rows:repeat(7,24px);grid-auto-flow:column;grid-auto-columns:24px;width:max-content;max-width:100%}.relay-history__day,.relay-history__blank{box-sizing:border-box;width:24px;height:24px}.relay-history__blank{display:block}.relay-history__day{appearance:none;padding:0;border:0;background:transparent;cursor:default;display:grid;place-items:center}.relay-history__day::before{content:"";box-sizing:border-box;width:16px;height:16px;border:1px solid transparent;border-radius:3px;background:var(--dsw-alias-border-l1);transition:transform .12s ease,box-shadow .12s ease,background .16s ease}.relay-history__day:hover::before,.relay-history__day:focus-visible::before{transform:translateY(-1px);box-shadow:0 2px 6px rgba(0,0,0,.18)}.relay-history__day--1::before{background:color-mix(in srgb,var(--relay-history-accent) 34%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--2::before{background:color-mix(in srgb,var(--relay-history-accent) 52%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--3::before{background:color-mix(in srgb,var(--relay-history-accent) 72%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day--4::before{background:color-mix(in srgb,var(--relay-history-accent) 92%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}.relay-history__day.is-today::before{border-color:var(--relay-history-accent);box-shadow:0 0 0 1px var(--dsw-alias-bg-layer-1,var(--dsw-alias-bg-base)),0 0 0 2px var(--relay-history-accent)}.relay-history__day--loading::before{border:0;animation:relay-history-pulse 1.2s ease-in-out infinite alternate}.relay-history__error,.relay-history__empty{margin:0;color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}.relay-history__error{color:var(--dsw-alias-state-error-primary,#df4b4b)}.relay-history__tooltip{position:fixed;z-index:1001;box-sizing:border-box;width:max-content;max-width:calc(100vw - 16px);padding:8px 10px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:#202124;color:#fff;font:500 12px/18px var(--dsw-font-family,system-ui,sans-serif);overflow-wrap:anywhere;box-shadow:0 6px 18px rgba(0,0,0,.32);pointer-events:none;opacity:0;transform:translateY(2px);transition:opacity .1s ease,transform .1s ease}.relay-history__tooltip strong,.relay-history__tooltip span{display:block}.relay-history__tooltip strong{font-size:12px;font-weight:650}.relay-history__tooltip span{color:rgba(255,255,255,.78);font-variant-numeric:tabular-nums}.relay-history__tooltip[data-visible="true"]{opacity:1;transform:translateY(0)}
+.relay-model{box-sizing:border-box;min-width:0;min-height:148px;padding-left:24px;border-left:1px solid var(--dsw-alias-border-l1);display:flex;flex-direction:column;justify-content:center;gap:10px}.relay-model h4{margin:0;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-primary));font-size:12px;line-height:18px;font-weight:650}.relay-model__body{min-width:0;display:grid;grid-template-columns:108px minmax(0,1fr);align-items:center;gap:14px}.relay-model__chart{width:108px;aspect-ratio:1;position:relative}.relay-model__chart svg{display:block;width:100%;height:100%;overflow:visible}.relay-model__track,.relay-model__segment{fill:none;stroke-width:6}.relay-model__track{stroke:var(--dsw-alias-border-l1)}.relay-model__segment{cursor:pointer;transition:opacity .16s ease,stroke-width .16s ease}.relay-model__segment:hover,.relay-model__segment:active{stroke-width:7.5}.relay-model__segment--1{stroke:#3b82f6}.relay-model__segment--2{stroke:#06b6d4}.relay-model__segment--3{stroke:#8b5cf6}.relay-model__segment--4{stroke:#f59e0b}.relay-model__segment--5{stroke:#22c55e}.relay-model__segment--6{stroke:#64748b}.relay-model__center{position:absolute;inset:0;pointer-events:none;display:flex;align-items:center;justify-content:center;flex-direction:column;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}.relay-model__center strong{font-size:16px;line-height:20px;font-weight:700}.relay-model__center small{color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px}.relay-model__legend{min-width:0;margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:2px}.relay-model__legend li{min-width:0}.relay-model__legend-button{appearance:none;box-sizing:border-box;width:100%;min-height:24px;margin:0;padding:2px 3px;border:0;border-radius:5px;background:transparent;display:grid;grid-template-columns:8px minmax(0,1fr) auto;align-items:center;gap:6px;color:var(--dsw-alias-label-secondary,var(--dsw-alias-label-primary));font:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer}.relay-model__legend-button:hover{background:var(--dsw-alias-interactive-bg-hover)}.relay-model__legend-button:focus-visible{outline:2px solid var(--relay-history-accent);outline-offset:1px}.relay-model__swatch{width:7px;height:7px;border-radius:50%}.relay-model__swatch--1{background:#3b82f6}.relay-model__swatch--2{background:#06b6d4}.relay-model__swatch--3{background:#8b5cf6}.relay-model__swatch--4{background:#f59e0b}.relay-model__swatch--5{background:#22c55e}.relay-model__swatch--6{background:#64748b}.relay-model__name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.relay-model__value{color:var(--dsw-alias-label-tertiary);font-variant-numeric:tabular-nums;white-space:nowrap}.relay-model__empty{min-height:108px;display:flex;align-items:center;justify-content:center;color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:17px;text-align:center}.relay-model.is-loading .relay-model__empty{animation:relay-model-fade 1.2s ease-in-out infinite alternate}
+@keyframes relay-history-pulse{from{background:color-mix(in srgb,var(--relay-history-accent) 12%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}to{background:color-mix(in srgb,var(--relay-history-accent) 32%,var(--dsw-alias-bg-layer-2,var(--dsw-alias-bg-base)))}}@keyframes relay-model-fade{from{opacity:.45}to{opacity:1}}
+@media (max-width:620px){.relay-history__content{grid-template-columns:1fr;align-items:start;gap:14px}.relay-model{min-height:0;padding-left:0;padding-top:14px;border-left:0;border-top:1px solid var(--dsw-alias-border-l1)}.relay-model__body{grid-template-columns:104px minmax(0,1fr)}.relay-model__chart{width:104px}}
 @media (max-width:560px){.relay-history__header{align-items:flex-start;flex-direction:column;gap:4px}.relay-history__summary{width:100%;margin-left:0}.relay-history__summary>span{white-space:normal}.relay-history__refresh{margin-left:auto;margin-top:-24px}}
-@media (forced-colors:active){.relay-history__day{forced-color-adjust:none}.relay-history__day::before{border-color:GrayText}.relay-history__day--1::before{background:Highlight;opacity:.35}.relay-history__day--2::before{background:Highlight;opacity:.55}.relay-history__day--3::before{background:Highlight;opacity:.75}.relay-history__day--4::before{background:Highlight;opacity:1}.relay-history__day.is-today{outline:2px solid CanvasText;outline-offset:1px}}
-@media (prefers-reduced-motion:reduce){.relay-balance,.relay-balance__fill,.relay-history__refresh,.relay-history__day::before,.relay-history__tooltip{transition:none}.relay-history__day--loading::before{animation:none}}
+@media (max-width:380px){.relay-model__body{grid-template-columns:1fr}.relay-model__chart{justify-self:center}.relay-model__legend{width:100%}}
+@media (forced-colors:active){.relay-history__day{forced-color-adjust:none}.relay-history__day::before{border-color:GrayText}.relay-history__day--1::before{background:Highlight;opacity:.35}.relay-history__day--2::before{background:Highlight;opacity:.55}.relay-history__day--3::before{background:Highlight;opacity:.75}.relay-history__day--4::before{background:Highlight;opacity:1}.relay-history__day.is-today{outline:2px solid CanvasText;outline-offset:1px}.relay-model__segment,.relay-model__swatch{forced-color-adjust:none}.relay-model__track{stroke:GrayText}.relay-model__legend-button:focus-visible{outline-color:Highlight}}
+@media (prefers-reduced-motion:reduce){.relay-balance,.relay-balance__fill,.relay-history__refresh,.relay-history__day::before,.relay-history__tooltip,.relay-model__segment{transition:none}.relay-history__day--loading::before,.relay-model.is-loading .relay-model__empty{animation:none}}
 `
 
 const inject = ['slots', 'connection', 'settingsScope']
@@ -787,6 +933,7 @@ exports.apply = apply
 exports.inject = inject
 exports.BalanceIndicator = BalanceIndicator
 exports.DailyUsageHeatmap = DailyUsageHeatmap
+exports.ModelUsageDonut = ModelUsageDonut
 exports.RelaySettingsSection = RelaySettingsSection
 exports.createBalanceRequestManager = createBalanceRequestManager
 exports.createHistoryRequestManager = createHistoryRequestManager

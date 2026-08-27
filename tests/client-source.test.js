@@ -51,7 +51,20 @@ function historyFixture() {
   days[29] = { date: '2026-08-20', actualCost: 1.25, requests: 12, totalTokens: 45_000 }
   return {
     unit: 'USD', timeZone: 'Asia/Shanghai', from: '2026-07-22', through: '2026-08-20',
-    days, summary: { actualCost: 999, requests: 999, totalTokens: 999 }, fetchedAt: '2026-08-20T00:00:00.000Z',
+    days,
+    summary: { actualCost: 999, requests: 999, totalTokens: 999 },
+    modelUsage: {
+      totalRequests: 14,
+      models: [
+        { model: 'claude-sonnet-4-6', requests: 6 },
+        { model: 'gpt-5', requests: 3 },
+        { model: 'gemini-2.5-pro', requests: 2 },
+        { model: 'deepseek-v3', requests: 1 },
+        { model: 'grok-4', requests: 1 },
+      ],
+      otherRequests: 1,
+    },
+    fetchedAt: '2026-08-20T00:00:00.000Z',
   }
 }
 
@@ -98,8 +111,15 @@ test('history decoder accepts exactly 30 consecutive dates and recomputes public
   const decoded = clientExports.decodeHistoryData(historyFixture())
   assert.equal(decoded.days.length, 30)
   assert.deepEqual({ ...decoded.summary }, { actualCost: 1.2542, requests: 14, totalTokens: 45_320 })
+  assert.deepEqual(JSON.parse(JSON.stringify(decoded.modelUsage)), historyFixture().modelUsage)
   assert.throws(() => clientExports.decodeHistoryData({ ...historyFixture(), timeZone: 'UTC' }), /无效/)
   assert.throws(() => clientExports.decodeHistoryData({ ...historyFixture(), days: historyFixture().days.slice(1) }), /无效/)
+  assert.equal(clientExports.decodeHistoryData({ ...historyFixture(), modelUsage: { totalRequests: 14, models: [], otherRequests: 0 } }).modelUsage, null)
+  assert.equal(clientExports.decodeHistoryData({
+    ...historyFixture(),
+    modelUsage: { totalRequests: 2, models: [{ model: 'dup', requests: 1 }, { model: 'dup', requests: 1 }], otherRequests: 0 },
+  }).modelUsage, null)
+  assert.equal(clientExports.decodeHistoryData({ ...historyFixture(), modelUsage: null }).modelUsage, null)
   const gap = historyFixture()
   gap.days[12] = { ...gap.days[12], date: '2026-08-01' }
   assert.throws(() => clientExports.decodeHistoryData(gap), /无效/)
@@ -402,11 +422,13 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
 })
 
 function renderWithState(componentName, state, props = {}, globals = {}) {
+  let nextId = 0
   const react = {
     useState: () => [state, () => {}],
     useRef: (value) => ({ current: value }),
     useCallback: (callback) => callback,
     useEffect() {},
+    useId: () => `relay-test-${++nextId}`,
     createElement: (type, elementProps, ...children) => ({ type, props: elementProps || {}, children }),
   }
   return evaluateSource(react, globals)[componentName](props)
@@ -420,13 +442,19 @@ function renderHeatmap(state, enabled = true, globals = {}) {
   return renderWithState('DailyUsageHeatmap', state, { enabled }, globals)
 }
 
+function renderModelUsage(usage, callbacks = {}) {
+  return renderWithState('ModelUsageDonut', null, { usage, ...callbacks })
+}
+
 test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, and today outline', () => {
   const data = clientExports.decodeHistoryData(historyFixture())
   const heatmap = renderHeatmap({ data, loading: false, error: null })
   assert.match(heatmap.props.className, /relay-history/)
   assert.equal(heatmap.children[0].children[0].children[0], '近 30 天使用情况')
   assert.equal(heatmap.children[0].children[1].children[0].children[0], '$1.25 · 14 次 · 45.3K Token')
-  const cells = heatmap.children[1].children[0]
+  const content = heatmap.children[1]
+  const grid = content.children[0].children[0]
+  const cells = grid.children[0]
   assert.equal(cells.length, 33, 'Wednesday range start needs three Sunday-first leading blanks plus 30 days')
   assert.equal(cells.slice(0, 3).every((cell) => cell.props.className === 'relay-history__blank'), true)
   const firstDay = cells[3]
@@ -436,9 +464,13 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(sparseZeroDay.props['aria-label'], /扣费 \$0，0 次请求，0 Token/)
   assert.match(today.props.className, /relay-history__day--4 is-today/)
   assert.match(today.props['aria-label'], /2026年8月20日，扣费 \$1\.25，12 次请求，45K Token/)
-  assert.equal(typeof today.props.onMouseEnter, 'function')
-  assert.equal(typeof today.props.onClick, 'function')
-  assert.equal(heatmap.children[1].props.role, 'group')
+  assert.equal(typeof today.props.onPointerEnter, 'function')
+  assert.equal(typeof today.props.onPointerDown, 'function')
+  assert.equal(typeof today.props.onFocus, 'function')
+  assert.equal(grid.props.role, 'group')
+  assert.equal(typeof content.children[1].type, 'function')
+  assert.equal(content.children[1].type.name, 'ModelUsageDonut')
+  assert.deepEqual(JSON.parse(JSON.stringify(content.children[1].props.usage)), historyFixture().modelUsage)
 
   const waiting = renderHeatmap({ data: null, loading: false, error: null }, false)
   assert.equal(waiting.children[0].children[1].children[0].children[0], '等待配置')
@@ -449,6 +481,65 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
   assert.match(source, /--relay-history-accent:#3b82f6/)
   assert.match(source, /border-radius:3px;background:var\(--dsw-alias-border-l1\)/)
+  assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:/)
+  assert.match(source, /@media \(max-width:620px\)\{\.relay-history__content\{grid-template-columns:1fr/)
+})
+
+test('model usage donut renders top five plus other with accessible pointer, touch, and keyboard details', () => {
+  const usage = clientExports.decodeHistoryData(historyFixture()).modelUsage
+  const events = []
+  const donut = renderModelUsage(usage, {
+    onDetailEvent: (action, _event, key, title, detail) => events.push({ action, key, title, detail }),
+  })
+  assert.equal(donut.props['aria-labelledby'], donut.children[0].props.id)
+  assert.equal(donut.children[0].children[0], '模型调用量')
+  const body = donut.children[1]
+  const chart = body.children[0]
+  const svg = chart.children[0]
+  assert.equal(svg.props['aria-hidden'], 'true')
+  assert.equal(svg.props.focusable, 'false')
+  const segments = svg.children[1]
+  assert.equal(segments.length, 6)
+  assert.equal(segments[0].props.tabIndex, undefined)
+  assert.equal(typeof segments[0].props.onPointerEnter, 'function')
+  assert.equal(typeof segments[0].props.onPointerDown, 'function')
+  assert.match(segments[0].props.style.strokeDasharray, /^42\.857/)
+  assert.equal(segments[0].props.style.strokeDashoffset, 0)
+  assert.match(segments[1].props.style.strokeDashoffset.toString(), /^-42\.857/)
+  assert.equal(chart.children[1].children[0].children[0], '14')
+  const legend = body.children[1].children[0]
+  assert.equal(legend.length, 6)
+  assert.equal(legend[5].children[0].children[1].children[0], '其他模型')
+  assert.match(legend[5].children[0].props['aria-label'], /其他模型，1 次调用，占 7\.1%/)
+  assert.equal(typeof legend[0].children[0].props.onFocus, 'function')
+  assert.equal(typeof legend[0].children[0].props.onPointerDown, 'function')
+  legend[0].children[0].props.onFocus({})
+  assert.deepEqual(events[0], { action: 'show', key: 'model-0', title: 'claude-sonnet-4-6', detail: '6 次调用 · 43%' })
+  legend[0].children[0].props.onBlur({})
+  assert.equal(events[1].action, 'hide')
+  let prevented = false
+  let stopped = false
+  segments[0].props.onPointerDown({ pointerType: 'touch', preventDefault() { prevented = true }, stopPropagation() { stopped = true } })
+  assert.equal(events[2].action, 'toggle')
+  assert.equal(prevented, true)
+  assert.equal(stopped, true)
+
+  const one = renderModelUsage({ totalRequests: 1_000_001, models: [{ model: 'dominant', requests: 1_000_000 }], otherRequests: 1 })
+  const oneSegments = one.children[1].children[0].children[0].children[1]
+  assert.match(oneSegments[0].props.style.strokeDasharray, /^99\.9999/)
+  assert.match(one.children[1].children[1].children[0][1].children[0].props['aria-label'], /占 <0\.1%/)
+  const single = renderModelUsage({ totalRequests: 1, models: [{ model: 'only', requests: 1 }], otherRequests: 0 })
+  assert.equal(single.children[1].children[0].children[0].children[1][0].props.style.strokeDasharray, '100 0')
+
+  const unavailable = renderModelUsage(null)
+  assert.equal(unavailable.children[1].children[0], '中转站未提供模型统计')
+  const empty = renderModelUsage({ totalRequests: 0, models: [], otherRequests: 0 })
+  assert.equal(empty.children[1].children[0], '近 30 天暂无模型调用')
+  assert.match(source, /\.relay-model__segment--1\{stroke:#3b82f6\}/)
+  assert.match(source, /\.relay-model__segment--6\{stroke:#64748b\}/)
+  assert.match(source, /\.relay-model__legend-button:focus-visible\{outline:2px solid var\(--relay-history-accent\)/)
+  assert.match(source, /@media \(max-width:380px\)\{\.relay-model__body\{grid-template-columns:1fr/)
+  assert.match(source, /\.relay-model__segment,\.relay-model__swatch\{forced-color-adjust:none\}/)
 })
 
 test('subscription timing text contains only expiry and reset information', () => {

@@ -125,19 +125,18 @@ test('history decoder accepts exactly 30 consecutive dates and recomputes public
   assert.throws(() => clientExports.decodeHistoryData(gap), /无效/)
 })
 
-test('history helpers provide compact precision, six ranked levels, and viewport-safe tooltips', () => {
+test('history helpers provide compact precision, four ranked levels, and viewport-safe tooltips', () => {
   assert.equal(clientExports.historyMoney(0, 'USD'), '$0')
   assert.equal(clientExports.historyMoney(0.0042, 'USD'), '$0.0042')
   assert.equal(clientExports.historyMoney(1.25, 'USD'), '$1.25')
   assert.equal(clientExports.compactMetric(128_000), '128K')
   assert.equal(clientExports.compactMetric(1_250_000), '1.3M')
   const scale = clientExports.heatScale([
-    { actualCost: 0 }, { actualCost: 1 }, { actualCost: 2 }, { actualCost: 3 },
-    { actualCost: 4 }, { actualCost: 5 }, { actualCost: 6 },
+    { actualCost: 0 }, { actualCost: 1 }, { actualCost: 2 }, { actualCost: 3 }, { actualCost: 4 },
   ])
-  assert.deepEqual(Array.from(scale), [1, 2, 3, 4, 5, 6])
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6].map((value) => clientExports.heatLevel(value, scale)), [0, 1, 2, 3, 4, 5, 6])
-  assert.equal(clientExports.heatLevel(7, [7]), 6)
+  assert.deepEqual(Array.from(scale), [1, 2, 3, 4])
+  assert.deepEqual([0, 1, 2, 3, 4].map((value) => clientExports.heatLevel(value, scale)), [0, 1, 2, 3, 4])
+  assert.equal(clientExports.heatLevel(7, [7]), 4)
   assert.deepEqual({ ...clientExports.heatmapTooltipPosition(
     { left: 100, top: 100, bottom: 116, width: 16 },
     { width: 180, height: 48 },
@@ -463,7 +462,7 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   const today = cells.at(-1)
   assert.match(firstDay.props.className, /relay-history__day--0/)
   assert.match(sparseZeroDay.props['aria-label'], /扣费 \$0，0 次请求，0 Token/)
-  assert.match(today.props.className, /relay-history__day--6 is-today/)
+  assert.match(today.props.className, /relay-history__day--4 is-today/)
   assert.match(today.props['aria-label'], /2026年8月20日，扣费 \$1\.25，12 次请求，45K Token/)
   assert.equal(typeof today.props.onPointerEnter, 'function')
   assert.equal(typeof today.props.onPointerDown, 'function')
@@ -482,13 +481,11 @@ test('heatmap renders a Sunday-first 30-day grid, compact summary, zero days, an
   assert.match(source, /\.relay-history__day::before\{content:"";box-sizing:border-box;width:16px;height:16px/)
   assert.match(source, /--relay-history-accent:#3b82f6/)
   assert.match(source, /border-radius:3px;background:var\(--dsw-alias-border-l1\)/)
-  assert.match(source, /\.relay-history__day--1::before\{background:light-dark\(#4ade80,#86efac\)\}/)
-  assert.match(source, /\.relay-history__day--2::before\{background:light-dark\(#166534,#16a34a\)\}/)
-  assert.match(source, /\.relay-history__day--3::before\{background:light-dark\(#facc15,#fde047\)\}/)
-  assert.match(source, /\.relay-history__day--4::before\{background:light-dark\(#854d0e,#ca8a04\)\}/)
-  assert.match(source, /\.relay-history__day--5::before\{background:light-dark\(#f87171,#fca5a5\)\}/)
-  assert.match(source, /\.relay-history__day--6::before\{background:light-dark\(#991b1b,#dc2626\)\}/)
-  assert.match(source, /\.relay-history__day--6::before\{background:Highlight;opacity:1\}/)
+  assert.match(source, /\.relay-history__day--1::before\{background:color-mix\(in srgb,var\(--relay-history-accent\) 34%/)
+  assert.match(source, /\.relay-history__day--2::before\{background:color-mix\(in srgb,var\(--relay-history-accent\) 52%/)
+  assert.match(source, /\.relay-history__day--3::before\{background:color-mix\(in srgb,var\(--relay-history-accent\) 72%/)
+  assert.match(source, /\.relay-history__day--4::before\{background:color-mix\(in srgb,var\(--relay-history-accent\) 92%/)
+  assert.match(source, /\.relay-history__day--4::before\{background:Highlight;opacity:1\}/)
   assert.match(source, /\.relay-history__content\{display:grid;grid-template-columns:[^}]+align-items:center;gap:16px/)
   assert.match(source, /\.relay-history__calendar\{[^}]+justify-content:center/)
   assert.match(source, /@media \(max-width:620px\)\{\.relay-history__content\{grid-template-columns:1fr/)

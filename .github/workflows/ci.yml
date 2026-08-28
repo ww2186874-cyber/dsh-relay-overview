@@ -26,16 +26,19 @@ jobs:
       - name: Pack and smoke-test the published surface
         shell: bash
         run: |
+          package_name="$(node -p 'require("./package.json").name')"
           tarball="$(npm pack --silent | tail -n 1)"
+          archive="$PWD/$tarball"
           temp_dir="$(mktemp -d)"
-          trap 'rm -rf "$temp_dir" "$tarball"' EXIT
-          npm init -y --prefix "$temp_dir" >/dev/null
-          npm install --ignore-scripts --prefix "$temp_dir" "$PWD/$tarball" >/dev/null
+          trap 'rm -rf "$temp_dir" "$archive"' EXIT
           cd "$temp_dir"
-          node --input-type=module -e "
-            import { createRequire } from 'node:module'
-            const require = createRequire(import.meta.url)
-            const plugin = await import('dsh-relay-balance')
-            if (plugin.name !== 'dsh-relay-balance' || typeof plugin.apply !== 'function' || !plugin.Config) process.exit(1)
-            for (const path of ['dsh-relay-balance/client', 'dsh-relay-balance/cordis.patch.yml', 'dsh-relay-balance/package.json']) require.resolve(path)
-          "
+          npm init -y >/dev/null
+          npm install --ignore-scripts "$archive" >/dev/null
+          PACKAGE_NAME="$package_name" node --input-type=module <<'NODE'
+          import { createRequire } from 'node:module'
+          const require = createRequire(import.meta.url)
+          const packageName = process.env.PACKAGE_NAME
+          const plugin = await import(packageName)
+          if (plugin.name !== packageName || typeof plugin.apply !== 'function' || !plugin.Config) process.exit(1)
+          for (const suffix of ['client', 'cordis.patch.yml', 'package.json']) require.resolve(`${packageName}/${suffix}`)
+          NODE

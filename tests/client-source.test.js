@@ -26,7 +26,7 @@ function evaluateBundle() {
     window: {
       __ModuleLoader__: {
         load(definition) {
-          assert.equal(definition.id, 'dsh-relay-balance')
+          assert.equal(definition.id, 'dsh-relay-overview')
           factory = definition.factory
         },
       },
@@ -223,7 +223,7 @@ test('history request manager uses only the same-origin Host route and deduplica
   const data = await first
   assert.equal(data.days.length, 30)
   assert.equal(seen.length, 1)
-  assert.equal(seen[0].url, '/relay-balance/history')
+  assert.equal(seen[0].url, '/relay-overview/history')
   assert.equal(seen[0].init.method, 'GET')
   assert.equal(seen[0].init.credentials, 'same-origin')
   assert.equal(seen[0].init.cache, 'no-store')
@@ -368,8 +368,8 @@ test('history refresh lifecycle loads on entry, listens for saved-config refresh
   let removedHandler
   const manager = { refresh() { refreshes += 1 }, abort() { aborts += 1 } }
   const windowObject = {
-    addEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); refreshHandler = callback },
-    removeEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); removedHandler = callback },
+    addEventListener(type, callback) { assert.equal(type, 'relay-overview:refresh'); refreshHandler = callback },
+    removeEventListener(type, callback) { assert.equal(type, 'relay-overview:refresh'); removedHandler = callback },
   }
   const dispose = clientExports.installHistoryRefreshLifecycle(manager, windowObject)
   assert.equal(refreshes, 1)
@@ -394,8 +394,8 @@ test('refresh lifecycle installs load, minute, and visibility refresh and cleans
   const windowObject = {
     setInterval(callback, delay) { intervalCallback = callback; intervalDelay = delay; return 42 },
     clearInterval(id) { cleared = id },
-    addEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); refreshEventHandler = callback },
-    removeEventListener(type, callback) { assert.equal(type, 'relay-balance:refresh'); removedRefreshEventHandler = callback },
+    addEventListener(type, callback) { assert.equal(type, 'relay-overview:refresh'); refreshEventHandler = callback },
+    removeEventListener(type, callback) { assert.equal(type, 'relay-overview:refresh'); removedRefreshEventHandler = callback },
   }
   const documentObject = {
     visibilityState: 'visible',
@@ -597,7 +597,7 @@ test('quota rendering uses a percentage while wallet rendering does not invent o
   const walletWide = renderIndicator(walletState, true)
   const walletRail = renderIndicator(walletState, false)
 
-  assert.match(quotaWide.props.className, /relay-balance--wide/)
+  assert.match(quotaWide.props.className, /relay-overview--wide/)
   assert.match(quotaRail.props.className, /has-percent/)
   assert.equal(quotaRail.children[0].children[0], '40')
   assert.equal(quotaWide.children[0].children[0].children[0], '$40.00/$100.00')
@@ -665,7 +665,7 @@ test('expanded and collapsed subscriptions portal a larger timing tooltip to the
   assert.equal(typeof wide.props.onMouseLeave, 'function')
   wide.props.onMouseEnter({ currentTarget: { getBoundingClientRect: () => card } })
   assert.equal(tags.length, 1)
-  assert.equal(tags[0].className, 'relay-balance__timing')
+  assert.equal(tags[0].className, 'relay-overview__timing')
   assert.equal(tags[0].attributes.role, 'tooltip')
   assert.equal(tags[0].textContent, expected)
   assert.equal(tags[0].style.left, '276px')
@@ -713,8 +713,8 @@ test('client source preserves lifecycle, generic Slot identity, and rc8 layout c
   assert.match(source, /current === record/)
   assert.match(source, /ctx\.slots\.inject\('sidebar\.footer\.action'/)
   assert.match(source, /function BalanceIndicator\(\{ wide \}\)/)
-  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-balance--wide\)/)
-  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-balance--rail\)/)
+  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-overview--wide\)/)
+  assert.match(source, /:has\(> \[data-slot="sidebar\.footer\.action"\] > \.relay-overview--rail\)/)
   assert.equal(source.includes('nbapi'), false)
   assert.equal(source.includes('NBAPI'), false)
   assert.equal(source.includes('hHd-Xa_'), false)
@@ -727,10 +727,10 @@ test('client uses write-only credential APIs and never calls an upstream URL dir
     assert.equal(text.includes('authorization'), false)
     assert.equal(text.includes('Bearer '), false)
     assert.equal(text.includes('localStorage'), false)
-    assert.match(text, /\/relay-balance\/status/)
-    assert.match(text, /\/relay-balance\/history/)
-    assert.match(text, /\/relay-balance\/test/)
-    assert.match(text, /\/relay-balance\/save/)
+    assert.match(text, /\/relay-overview\/status/)
+    assert.match(text, /\/relay-overview\/history/)
+    assert.match(text, /\/relay-overview\/test/)
+    assert.match(text, /\/relay-overview\/save/)
     assert.match(text, /api\.credentials\.describe/)
     assert.equal(text.includes('api.credentials.set'), false)
     assert.match(text, /type: 'password'/)
@@ -745,13 +745,13 @@ test('settings helper sends test and save payloads only to local Host routes', a
     seen.push({ url, init })
     return { ok: true, status: 200, json: async () => ({ ok: true, data }) }
   }
-  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-balance/test', {
+  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-overview/test', {
     baseURL: 'https://relay.test/v1', apiKey: 'SECRET',
   }), data)
-  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-balance/save', {
+  assert.deepEqual(await clientExports.callRelayConnection(fetchImpl, '/relay-overview/save', {
     baseURL: 'https://relay.test/v1', apiKey: 'SECRET', expectedRevision: 7,
   }), data)
-  assert.deepEqual(seen.map((entry) => entry.url), ['/relay-balance/test', '/relay-balance/save'])
+  assert.deepEqual(seen.map((entry) => entry.url), ['/relay-overview/test', '/relay-overview/save'])
   assert.ok(seen.every((entry) => entry.init.method === 'POST' && entry.init.credentials === 'same-origin'))
   assert.equal(JSON.parse(seen[1].init.body).expectedRevision, 7)
 })
@@ -773,11 +773,11 @@ test('Client apply owns styles and registers both sidebar and settings entries',
   const client = evaluateSource({}, { document: documentObject })
   client.apply({
     effect(factory, description) {
-      assert.equal(description, 'relay-balance: styles')
+      assert.equal(description, 'relay-overview: styles')
       styleDispose = factory()
     },
     settingsScope: {
-      bind(options) { assert.equal(options.namespace, 'dsh-relay-balance'); return scope },
+      bind(options) { assert.equal(options.namespace, 'dsh-relay-overview'); return scope },
     },
     connection: { api: { credentials: { describe() {} } } },
     slots: {
@@ -786,12 +786,12 @@ test('Client apply owns styles and registers both sidebar and settings entries',
     },
   })
   assert.equal(appended.length, 1)
-  assert.equal(appended[0].dataset.plugin, 'dsh-relay-balance')
-  assert.match(appended[0].textContent, /\.relay-balance/)
+  assert.equal(appended[0].dataset.plugin, 'dsh-relay-overview')
+  assert.match(appended[0].textContent, /\.relay-overview/)
   assert.match(appended[0].textContent, /\.relay-settings/)
   injected.get('sidebar.footer.action')()
   injected.get('settings.section')()
-  assert.equal(registrations[0].options.id, 'relay-balance')
+  assert.equal(registrations[0].options.id, 'relay-overview')
   assert.equal(registrations[0].options.name, 'sidebar.footer.action')
   assert.equal(registrations[0].options.label, '中转概览')
   assert.equal(registrations[0].value, client.BalanceIndicator)

@@ -7,7 +7,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 export function renderClientBundle(input) {
   const source = input.replace(/\r\n?/g, '\n')
   const indented = source.split('\n').map((line) => line === '' ? '' : `    ${line}`).join('\n')
-  return `window.__ModuleLoader__.load({\n  id: "dsh-relay-balance",\n  factory: (require) => {\n    const module = { exports: {} }\n    const exports = module.exports\n${indented}\n    return module.exports\n  },\n})\n`
+  return `window.__ModuleLoader__.load({\n  id: "dsh-relay-overview",\n  factory: (require) => {\n    const module = { exports: {} }\n    const exports = module.exports\n${indented}\n    return module.exports\n  },\n})\n`
 }
 
 export async function buildClient() {

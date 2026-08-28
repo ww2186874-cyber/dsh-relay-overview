@@ -1,10 +1,8 @@
-# Relay quota indicator. Normal users configure URL + API Key in Settings.
-# The providerId is retained only as a 0.2.x migration fallback.
+# Relay overview. Normal users configure URL + API Key in Settings.
 - insert:
-    - id: relay-balance
-      name: 'dsh-relay-balance'
+    - id: relay-overview
+      name: 'dsh-relay-overview'
       config:
-        providerId: sub2api
         displayName: Relay
         baseURL: ''
         credentialRef: ''

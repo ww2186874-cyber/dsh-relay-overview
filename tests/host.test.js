@@ -25,7 +25,7 @@ const TEST_SECRET = 'TEST_ONLY_SECRET_DO_NOT_USE'
 const TEST_BASE_URL = 'https://relay.test.invalid/v1'
 const TEST_CREDENTIAL_REF = 'TEST_ONLY_CREDENTIAL_REF'
 const FIXED_TIME = '2026-08-20T00:00:00.000Z'
-const CONFIG = { providerId: 'test-relay', displayName: '测试中转', baseURL: '', credentialRef: '', usagePath: 'auto', allowRemote: false }
+const CONFIG = { displayName: '测试中转', baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto', allowRemote: false }
 const WALLET = {
   mode: 'unrestricted',
   isValid: true,
@@ -61,18 +61,18 @@ const HISTORY = {
   ],
 }
 
-function settingsValue() {
-  return { providers: { 'test-relay': { baseURL: TEST_BASE_URL, apiKeyEnv: TEST_CREDENTIAL_REF } } }
+function relaySettingsValue() {
+  return { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }
 }
 
 function managedRefs(baseURL) {
   const digest = createHash('sha256').update(new URL(baseURL).origin).digest('hex').slice(0, 32).toUpperCase()
-  return [`DSH_RELAY_BALANCE_${digest}_A`, `DSH_RELAY_BALANCE_${digest}_B`]
+  return [`DSH_RELAY_OVERVIEW_${digest}_A`, `DSH_RELAY_OVERVIEW_${digest}_B`]
 }
 
 function readerOptions(overrides = {}) {
   return {
-    settings: { get: (ns) => ns === 'llm-pi-ai' ? settingsValue() : undefined },
+    settings: { get: (ns) => ns === 'dsh-relay-overview' ? relaySettingsValue() : undefined },
     credentials: { resolve: async () => ({ value: TEST_SECRET }) },
     config: CONFIG,
     now: () => new Date(FIXED_TIME),
@@ -136,29 +136,26 @@ function assertSafeError(error, code) {
   return true
 }
 
-test('validates deploy configuration and resolves plugin, composition, and legacy provider sources', () => {
+test('validates deploy configuration and resolves settings over composition', () => {
   assert.deepEqual(normalizePluginConfig(CONFIG), CONFIG)
-  assert.throws(() => normalizePluginConfig({ ...CONFIG, providerId: '../bad' }), /providerId/)
   assert.throws(() => normalizePluginConfig({ ...CONFIG, usagePath: 'relative' }), /usagePath/)
-  assert.throws(() => normalizePluginConfig({ ...CONFIG, baseURL: TEST_BASE_URL }), /set together/)
-  assert.deepEqual(normalizeRelaySettings({ baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }), {
-    baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto',
-  })
-  assert.deepEqual(resolveRelayConfig(settingsValue(), CONFIG), {
+  assert.throws(() => normalizePluginConfig({ ...CONFIG, credentialRef: '' }), /set together/)
+  assert.deepEqual(normalizeRelaySettings(relaySettingsValue()), relaySettingsValue())
+  assert.deepEqual(resolveRelayConfig(CONFIG), {
     displayName: CONFIG.displayName,
     usageURLs: [`${TEST_BASE_URL}/usage`, 'https://relay.test.invalid/usage'],
     credentialRef: TEST_CREDENTIAL_REF,
-    source: 'provider',
+    source: 'composition',
   })
-  assert.deepEqual(resolveRelayConfig(settingsValue(), CONFIG, {
+  assert.deepEqual(resolveRelayConfig(CONFIG, {
     baseURL: 'https://direct.test.invalid/v1', credentialRef: 'DIRECT_KEY', usagePath: 'auto',
   }), {
     displayName: CONFIG.displayName,
     usageURLs: ['https://direct.test.invalid/v1/usage', 'https://direct.test.invalid/usage'],
     credentialRef: 'DIRECT_KEY',
-    source: 'plugin',
+    source: 'settings',
   })
-  assert.throws(() => resolveRelayConfig({ providers: {} }, CONFIG), /中转概览设置/)
+  assert.throws(() => resolveRelayConfig({ ...CONFIG, baseURL: '', credentialRef: '' }), /中转概览设置/)
 })
 
 test('builds safe Sub2API usage candidates and rejects unsafe base URLs', () => {
@@ -378,7 +375,7 @@ test('rejects malformed Sub2API responses and inconsistent limits', () => {
   assert.throws(() => normalizeSub2ApiUsage({ mode: 'quota_limited', isValid: true }), /未返回/)
 })
 
-test('reader uses selected provider, resolves credentials per operation, and exposes no secret', async () => {
+test('reader uses Relay settings, resolves credentials per operation, and exposes no secret', async () => {
   let credentialReads = 0
   let fetchReads = 0
   const reader = createBalanceReader(readerOptions({
@@ -707,7 +704,7 @@ test('connection saver stages an origin-bound key, fences settings, and cleans i
   let current = { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }
   const calls = []
   const settings = {
-    get(ns) { return ns === 'dsh-relay-balance' ? current : undefined },
+    get(ns) { return ns === 'dsh-relay-overview' ? current : undefined },
     async update(ns, patch, revision) {
       calls.push(['settings', ns, patch, revision])
       current = { ...current, ...patch }
@@ -846,7 +843,7 @@ test('apply registers settings and all local routes', () => {
   let settingsOptions
   const ctx = {
     settings: {
-      get(ns) { return ns === 'llm-pi-ai' ? settingsValue() : undefined },
+      get(ns) { return ns === 'dsh-relay-overview' ? relaySettingsValue() : undefined },
       register(ns, _schema, options) { namespace = ns; settingsOptions = options; return {} },
       update() {},
     },
@@ -855,13 +852,13 @@ test('apply registers settings and all local routes', () => {
     effect(callback) { return callback() },
   }
   apply(ctx, CONFIG)
-  assert.equal(namespace, 'dsh-relay-balance')
+  assert.equal(namespace, 'dsh-relay-overview')
   assert.deepEqual(settingsOptions.base, { baseURL: TEST_BASE_URL, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' })
   assert.doesNotThrow(() => settingsOptions.validate({ baseURL: `${TEST_BASE_URL}/nested`, credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }))
   assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: TEST_CREDENTIAL_REF, usagePath: 'auto' }), /新 API Key/)
   assert.doesNotThrow(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs('https://different.test.invalid/v1')[0], usagePath: 'auto' }))
   assert.throws(() => settingsOptions.validate({ baseURL: 'https://different.test.invalid/v1', credentialRef: managedRefs(TEST_BASE_URL)[0], usagePath: 'auto' }), /插件管理/)
-  assert.deepEqual(registered.map((route) => route.path), ['/relay-balance/status', '/relay-balance/history', '/relay-balance/test', '/relay-balance/save'])
+  assert.deepEqual(registered.map((route) => route.path), ['/relay-overview/status', '/relay-overview/history', '/relay-overview/test', '/relay-overview/save'])
   assert.ok(registered.every((route) => route.kind === 'exact'))
   assert.throws(() => createBalanceReader({ settings: {}, credentials: { resolve() {} } }), /settings\.get/)
   assert.throws(() => apply({ settings: { get() {}, register() {}, update() {} }, credentials: { resolve() {}, describe() {}, set() {}, unset() {} }, webServer: {} }, CONFIG), /webServer\.register/)

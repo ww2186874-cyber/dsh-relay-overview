@@ -1,26 +1,19 @@
 {
-  "name": "dsh-relay-balance",
-  "version": "0.7.3",
-  "description": "DSH Web sidebar balance indicator for Sub2API-compatible relay providers",
+  "name": "dsh-relay-overview",
+  "version": "0.8.0",
+  "description": "DSH Web relay overview for Sub2API-compatible relay providers",
   "keywords": [
     "deepseek-harness",
     "dsh",
     "cordis",
     "sub2api",
     "relay",
+    "overview",
     "balance"
   ],
   "license": "MIT",
   "author": "ww2186874-cyber",
   "packageManager": "pnpm@11.22.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/ww2186874-cyber/dsh-relay-balance.git"
-  },
-  "homepage": "https://github.com/ww2186874-cyber/dsh-relay-balance#readme",
-  "bugs": {
-    "url": "https://github.com/ww2186874-cyber/dsh-relay-balance/issues"
-  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {

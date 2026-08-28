@@ -1,4 +1,4 @@
-# dsh-relay-balance
+# dsh-relay-overview
 
 [中文](#中文) | [English](#english)
 
@@ -49,36 +49,27 @@
 
 保存后的 API Key 不会回填到浏览器。只在同一个 HTTPS origin 内修改路径时，可以把 API Key 留空并继续使用现有密钥；切换到另一个中转站（origin 改变）时必须填写新 Key。
 
-从 `0.2.x` 升级时，插件会将原 `providerId` 对应 Provider 的 URL 和 credential reference 作为初始配置来源，因此原有余额查询会继续工作。第一次在设置页保存后，插件使用自己的 `dsh-relay-balance` Settings namespace，不再要求用户理解 Provider/YAML。
-
 ### 安装
 
 从 npm 安装（发布到 npm 后）：
 
 ```powershell
-dsh plugin --profile web add dsh-relay-balance
-```
-
-从 GitHub 安装：
-
-```powershell
-dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-balance
+dsh plugin --profile web add dsh-relay-overview
 ```
 
 本地开发安装：
 
 ```powershell
-dsh plugin --profile web add C:\path\to\dsh-relay-balance
+dsh plugin --profile web add C:\path\to\dsh-relay-overview
 ```
 
 正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → 中转概览** 中配置。
 
-以下 Cordis row 仅供高级部署或旧版兼容。**Profile patch 覆盖 row config 时会替换整个 `config`，所以必须重述所有键：**
+以下 Cordis row 仅供高级部署。**Profile patch 覆盖 row config 时会替换整个 `config`，所以必须重述所有键：**
 
 ```yaml
-- id: relay-balance
+- id: relay-overview
   config:
-    providerId: sub2api
     displayName: Relay
     baseURL: ''
     credentialRef: ''
@@ -90,7 +81,6 @@ dsh plugin --profile web add C:\path\to\dsh-relay-balance
 
 | 键 | 默认值 | 含义 |
 |---|---|---|
-| `providerId` | `sub2api` | 旧版兼容：从 `llm-pi-ai.providers` 读取初始 URL 和 credential reference |
 | `displayName` | `Relay` | 仅用于可访问性/兼容数据；当前简约卡片不显示名称 |
 | `baseURL` | 空 | 可选的 composition 层 URL；通常由设置页写入用户 Settings 层 |
 | `credentialRef` | 空 | 与 `baseURL` 配对的 Credential reference；不是 API Key 明文 |
@@ -112,7 +102,7 @@ dsh --profile web --dump-config
 - 上游只允许 HTTPS，拒绝 URL userinfo、query 和 fragment；改变 URL 等同于改变 API Key 的接收方，因此保存前必须先测试连接。
 - 上游请求使用 `redirect: 'error'`，并防御性拒绝 `redirected` 和 HTTP 3xx。
 - 响应正文同时受 `Content-Length` 和实际流式字节数的 1 MiB 限制，使用严格 UTF-8 解码。
-- `/relay-balance/status` 默认只接受直接回环连接；包含每日费用/请求/Token 聚合的 `/relay-balance/history` 始终只接受直接回环连接；`/relay-balance/test` 和会修改 Settings/Credential 的 `/relay-balance/save` 始终只接受直接回环 JSON POST。TCP peer 和 `Host` 都必须是 loopback，且请求不能携带常见代理转发头；同时拒绝跨站浏览器请求。
+- `/relay-overview/status` 默认只接受直接回环连接；包含每日费用/请求/Token 聚合的 `/relay-overview/history` 始终只接受直接回环连接；`/relay-overview/test` 和会修改 Settings/Credential 的 `/relay-overview/save` 始终只接受直接回环 JSON POST。TCP peer 和 `Host` 都必须是 loopback，且请求不能携带常见代理转发头；同时拒绝跨站浏览器请求。
 - 这沿用 DSH rc.8 对本机 Web API 的信任边界，不是独立的用户认证系统，不能抵御已经能直接调用本机 DSH loopback API 的恶意进程。不要在不信任的多人系统账户中使用；本机反向代理也必须在代理层完成身份认证。`allowRemote: true` 只放宽余额状态接口，不会放宽历史、测试或保存接口。
 - 公共错误经过脱敏，不回传上游正文或原始异常。
 
@@ -158,17 +148,17 @@ pnpm pack --dry-run
 1. 展开侧栏中 Relay 是完整的 footer row；
 2. 折叠侧栏中 Relay、Cordis 和 Settings 仍纵向排列；
 3. 点击、分钟、可见性和超时刷新正常；
-4. `/relay-balance/status` 与 `/relay-balance/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天，模型环形图仍只接收模型名和调用次数。
+4. `/relay-overview/status` 与 `/relay-overview/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天，模型环形图仍只接收模型名和调用次数。
 
 组件使用公开 Slot `sidebar.footer.action` 和 owner prop `wide`。两条窄范围的 `:has()` 兼容规则只依赖公开 `data-slot` 标记，用于适配 rc.8 的 `display: contents` Slot wrapper。
 
 ### 卸载
 
 ```powershell
-dsh plugin --profile web remove dsh-relay-balance
+dsh plugin --profile web remove dsh-relay-overview
 ```
 
-同时删除 Profile `cordis.patch.yml` 中针对 `relay-balance` 的覆盖，然后重启 DSH Web。
+同时删除 Profile `cordis.patch.yml` 中针对 `relay-overview` 的覆盖，然后重启 DSH Web。
 
 ### 许可证
 
@@ -184,28 +174,21 @@ A permanent DSH Web Profile sidebar quota indicator. The package has a generic *
 
 ### Configure
 
-Open **Settings → 中转概览**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A title-free responsive donut chart is vertically centered beside the heatmap; it shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
+Open **Settings → 中转概览**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A title-free responsive donut chart is vertically centered beside the heatmap; it shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key.
 
 ### Install
 
 From npm after the package has been published:
 
 ```sh
-dsh plugin --profile web add dsh-relay-balance
+dsh plugin --profile web add dsh-relay-overview
 ```
 
-Or directly from GitHub:
-
-```sh
-dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-balance
-```
-
-No YAML edit is required for normal use. For advanced composition or migration, a complete row override is:
+No YAML edit is required for normal use. For advanced composition, a complete row override is:
 
 ```yaml
-- id: relay-balance
+- id: relay-overview
   config:
-    providerId: sub2api
     displayName: Relay
     baseURL: ''
     credentialRef: ''
@@ -213,7 +196,6 @@ No YAML edit is required for normal use. For advanced composition or migration, 
     allowRemote: false
 ```
 
-`providerId` is retained as a `0.2.x` migration fallback. The settings page persists its own URL and credential reference after the first save.
 
 Restart the existing DSH Web process after installation; settings changes apply live.
 

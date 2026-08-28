@@ -1,23 +1,23 @@
-# dsh-relay-balance 项目记忆
+# dsh-relay-overview 项目记忆
 
-本文件是 `dsh-relay-balance` 的项目级持久记忆，供后续开发者和 AI Agent 在全新会话中读取。开始修改前，应同时阅读本文件、`README.md`、`package.json`，并检查 Git 工作区；不得覆盖用户或其他开发者已有的未提交更改。
+本文件是 `dsh-relay-overview` 的项目级持久记忆，供后续开发者和 AI Agent 在全新会话中读取。开始修改前，应同时阅读本文件、`README.md`、`package.json`，并检查 Git 工作区；不得覆盖用户或其他开发者已有的未提交更改。
 
 ## 1. 项目身份
 
-- 包名与插件名：`dsh-relay-balance`
-- 产品身份：通用 **Relay Balance**，不要使用 NBAPI 品牌。
+- 包名与插件名：`dsh-relay-overview`
+- 产品身份：通用 **Relay Overview**，不要使用 NBAPI 品牌。
 - 当前首个适配器：`sub2api`。
 - “Sub2API-compatible”只表示额度接口协议兼容，不代表目标站点运行原版 Sub2API，也不能据此声称其源码来源。
 - 这是永久安装到 DSH Web Profile 的 Cordis Profile Bundle，不是仅在当前进程中存在的 Dynamic Cordis Plugin。
-- 插件源码仓库的固定位置：`C:\Users\12187\.dsh\profiles\web\packages\dsh-relay-balance`
+- 插件源码仓库的固定位置：`C:\Users\12187\.dsh\profiles\web\packages\dsh-relay-overview`
 - Web Profile composition：`C:\Users\12187\.dsh\profiles\web\cordis.yml` 及其 `cordis.patch.yml`。
-- 插件 row id：`relay-balance`。
+- 插件 row id：`relay-overview`。
 
 ## 2. DSH Runtime 与插件源码的边界
 
 - DeepSeek Harness（DSH）Runtime 和本插件是两个分开存放、分开维护的项目。
 - DSH Runtime 安装在 `C:\Users\12187\AppData\Local\dsh-runtime\<版本目录>`；版本升级可能更换该版本目录。
-- 插件源码位于 Web Profile 的 `packages\dsh-relay-balance`，正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
+- 插件源码位于 Web Profile 的 `packages\dsh-relay-overview`，正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
 - 不要从某个旧版本号推断当前 Runtime 路径。需要检查 DSH 本体时，先确认当前实际版本和 checkout。
 - DSH 升级不会自动改变插件源码，但可能改变插件依赖的 Service、Slot、Settings、Client Runtime、构建产物协议或页面布局。因此“源码未变”不等于“运行兼容性必然不变”。升级后必须执行本文件的兼容性检查。
 - 只有在用户明确要求修改 DSH 本体时，才可以编辑 Runtime checkout。不要为了实现插件功能而偷偷修改已安装的 DSH 文件。
@@ -47,7 +47,7 @@
 - 不向普通用户暴露 Provider、Credential reference 或 YAML 概念。
 - 保存后不得把 API Key 回填到浏览器。
 - 只有 HTTPS origin 相同、仅路径发生变化时，才允许 API Key 留空并复用现有密钥；切换 origin 时必须填写新 Key。
-- 当前 Settings section id 为 `relay-balance`，面向用户的 label 与设置页标题均为 `中转概览`；包名、插件 ID、Settings namespace 和通用产品身份保持不变。
+- 当前 Settings section id 为 `relay-overview`，面向用户的 label 与设置页标题均为 `中转概览`；包名、插件 ID、Settings namespace 和通用产品身份保持不变。
 - 自定义 Settings 导航图标是否受支持取决于当前 DSH Settings Shell 的公开协议。旧版 rc.8 仅按内置 section id 选择图标，未知 id 回退为齿轮；在新 Runtime 上实现图标前必须重新检查，不要使用冒充保留 id 或脆弱的 DOM/CSS 替换。
 
 ## 4. 架构
@@ -55,12 +55,12 @@
 ### Host
 
 - 主文件：`lib/index.js`。
-- 注册 Settings namespace：`dsh-relay-balance`。
+- 注册 Settings namespace：`dsh-relay-overview`。
 - 本地路由：
-  - `GET /relay-balance/status`
-  - `GET /relay-balance/history`
-  - `POST /relay-balance/test`
-  - `POST /relay-balance/save`
+  - `GET /relay-overview/status`
+  - `GET /relay-overview/history`
+  - `POST /relay-overview/test`
+  - `POST /relay-overview/save`
 - Host 负责：读取配置、解析 Credential、请求上游、归一化额度、近 30 天每日聚合与模型调用聚合、测试连接、原子化保存设置与密钥、清理不再使用的托管密钥。
 - 历史公开数据只含每日 `date`、`actualCost`、`requests`、`totalTokens`、30 天汇总，以及白名单化的模型 `model` 与 `requests` 聚合。模型统计最多输出前 5 名和一个“其他”计数，不公开模型 Token、成本、`account_cost`、原始 `model_stats`、原始响应或逐请求记录；模型统计缺失或无效时必须降级为不可用，而不能破坏每日热力图。
 
@@ -103,21 +103,21 @@
 - Host 上游超时 12 秒；Client 本地操作超时 20 秒。
 - 上游响应同时受 `Content-Length` 和实际读取字节数的 1 MiB 限制，并使用严格 UTF-8 解码。
 - 对外错误必须脱敏，不能返回上游正文、API Key、Credential 值或原始敏感异常。
-- `/relay-balance/test` 与 `/relay-balance/save` 始终只接受直接 loopback、同站点 JSON POST；历史路由始终只接受直接 loopback，状态路由默认也只接受直接 loopback。
+- `/relay-overview/test` 与 `/relay-overview/save` 始终只接受直接 loopback、同站点 JSON POST；历史路由始终只接受直接 loopback，状态路由默认也只接受直接 loopback。
 - loopback 防护沿用 DSH 本机 Web API 的信任边界，不是抵御本机恶意进程的独立身份认证。
-- 托管 Credential slot 由 origin 的 SHA-256 派生，使用 A/B 双槽：`DSH_RELAY_BALANCE_<32_HEX>_A` 与 `_B`。
+- 托管 Credential slot 由 origin 的 SHA-256 派生，使用 A/B 双槽：`DSH_RELAY_OVERVIEW_<32_HEX>_A` 与 `_B`。
 - Host 必须串行执行完整的测试、暂存密钥、Settings revision 切换和清理事务。
 - Settings 更新必须使用 `expectedRevision`。
 - 明确的 `SETTINGS_CONFLICT` 应回滚未启用的暂存密钥；提交结果不明确时必须保留暂存数据，避免删除可能已经生效的密钥。
 - 清理操作只能触及由旧 URL 的精确 origin 派生出的托管槽，不能广泛删除 Credential。
 - 所有 Client/Host 副作用必须具有正确生命周期和清理逻辑。
 
-## 7. 配置与迁移
+## 7. 配置
 
-- 正常用户配置保存在 Settings namespace `dsh-relay-balance`。
+- 正常用户配置保存在 Settings namespace `dsh-relay-overview`。
 - 非秘密配置包含 `baseURL`、`credentialRef`、`usagePath`；API Key 本体只保存在 DSH Credential provider。
-- `providerId` 保留用于从 `0.2.x` Provider 配置迁移，不能重新包装成面向普通用户的 Provider 设置。
-- 当前兼容配置仍应保持完整键：`providerId`、`displayName`、`baseURL`、`credentialRef`、`usagePath`、`allowRemote`。
+- Composition 配置保持完整键：`displayName`、`baseURL`、`credentialRef`、`usagePath`、`allowRemote`。
+- 插件只使用 `dsh-relay-overview` namespace、`relay-overview` Row/Slot ID、`/relay-overview/*` 本地路由和 `DSH_RELAY_OVERVIEW_*` 托管 Credential；不注册其他名称的别名，也不从 Provider 配置回退。
 
 ## 8. 开发流程
 
@@ -151,7 +151,7 @@ pnpm pack --dry-run
 
 1. `pnpm verify` 全部通过，Client 生成产物没有漂移。
 2. 当前 Web Profile composition 能成功解析。
-3. `/relay-balance/status` 与 `/relay-balance/history` 返回 200，且只含归一化后的公开字段；模型聚合只含模型名和调用次数。
+3. `/relay-overview/status` 与 `/relay-overview/history` 返回 200，且只含归一化后的公开字段；模型聚合只含模型名和调用次数。
 4. 设置页仍只显示近 30 天热力图、模型调用量环形图、URL、API Key、测试连接和测试并保存。
 5. API Key 保存后不回填；跨 origin 留空 Key 仍被拒绝。
 6. 展开侧栏仍是完整 footer row；折叠时 Relay、Cordis 和 Settings 布局正常。

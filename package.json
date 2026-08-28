@@ -14,6 +14,14 @@
   "license": "MIT",
   "author": "ww2186874-cyber",
   "packageManager": "pnpm@11.22.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ww2186874-cyber/dsh-relay-overview.git"
+  },
+  "homepage": "https://github.com/ww2186874-cyber/dsh-relay-overview#readme",
+  "bugs": {
+    "url": "https://github.com/ww2186874-cyber/dsh-relay-overview/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {

@@ -57,6 +57,12 @@
 dsh plugin --profile web add dsh-relay-overview
 ```
 
+从 GitHub 安装：
+
+```powershell
+dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-overview
+```
+
 本地开发安装：
 
 ```powershell
@@ -182,6 +188,12 @@ From npm after the package has been published:
 
 ```sh
 dsh plugin --profile web add dsh-relay-overview
+```
+
+Or install directly from GitHub:
+
+```sh
+dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-overview
 ```
 
 No YAML edit is required for normal use. For advanced composition, a complete row override is:

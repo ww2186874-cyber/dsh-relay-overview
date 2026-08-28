@@ -47,7 +47,7 @@
 - 不向普通用户暴露 Provider、Credential reference 或 YAML 概念。
 - 保存后不得把 API Key 回填到浏览器。
 - 只有 HTTPS origin 相同、仅路径发生变化时，才允许 API Key 留空并复用现有密钥；切换 origin 时必须填写新 Key。
-- 当前 Settings section id 为 `relay-balance`，面向用户的 label 与设置页标题均为 `中转余额`；包名、插件 ID、Settings namespace 和通用产品身份保持不变。
+- 当前 Settings section id 为 `relay-balance`，面向用户的 label 与设置页标题均为 `中转概览`；包名、插件 ID、Settings namespace 和通用产品身份保持不变。
 - 自定义 Settings 导航图标是否受支持取决于当前 DSH Settings Shell 的公开协议。旧版 rc.8 仅按内置 section id 选择图标，未知 id 回退为齿轮；在新 Runtime 上实现图标前必须重新检查，不要使用冒充保留 id 或脆弱的 DOM/CSS 替换。
 
 ## 4. 架构

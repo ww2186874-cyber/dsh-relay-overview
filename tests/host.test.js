@@ -158,7 +158,7 @@ test('validates deploy configuration and resolves plugin, composition, and legac
     credentialRef: 'DIRECT_KEY',
     source: 'plugin',
   })
-  assert.throws(() => resolveRelayConfig({ providers: {} }, CONFIG), /中转余额设置/)
+  assert.throws(() => resolveRelayConfig({ providers: {} }, CONFIG), /中转概览设置/)
 })
 
 test('builds safe Sub2API usage candidates and rejects unsafe base URLs', () => {

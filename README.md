@@ -11,7 +11,7 @@
 ### 功能
 
 - 设置页只需填写 **中转 URL + API Key**，支持测试连接和测试后保存。
-- **中转余额**页显示最近 30 个北京时间自然日的每日实际扣费热力图、模型调用量环形图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
+- **中转概览**页显示最近 30 个北京时间自然日的每日实际扣费热力图、模型调用量环形图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
 - 热力图采用周日在上的 GitHub 式 7 行布局，并在卡片左边缘与中间分隔线之间水平居中；零用量显示主题自适应的中性灰，有用量按四档蓝色色阶逐级加深。悬停、聚焦或触屏点击某天可查看日期、扣费、请求数和 Token。
 - 右侧环形图不显示独立小标题，环形图与图例作为一个整体在热力图高度内垂直居中；它按调用次数显示前 5 个模型，其余合并为“其他模型”。中心显示模型统计总调用数，图例和交互提示显示模型、调用次数及占比；窄屏时图表自动排列到热力图下方。
 - 插件不建立本地历史数据库，只请求并保留当前页面内的最近 30 天；更早数据直接裁掉，上游未返回的日期显示为 0。
@@ -42,7 +42,7 @@
 ### 使用
 
 1. 打开 DSH Web 的 **Settings**。
-2. 进入 **中转余额**。
+2. 进入 **中转概览**。
 3. 填写中转 URL，例如 `https://relay.example/v1`。
 4. 填写 API Key。
 5. 点击 **测试连接**；确认余额解析正确后，点击 **测试并保存**。
@@ -71,7 +71,7 @@ dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-balance
 dsh plugin --profile web add C:\path\to\dsh-relay-balance
 ```
 
-正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → 中转余额** 中配置。
+正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → 中转概览** 中配置。
 
 以下 Cordis row 仅供高级部署或旧版兼容。**Profile patch 覆盖 row config 时会替换整个 `config`，所以必须重述所有键：**
 
@@ -184,7 +184,7 @@ A permanent DSH Web Profile sidebar quota indicator. The package has a generic *
 
 ### Configure
 
-Open **Settings → 中转余额**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A title-free responsive donut chart is vertically centered beside the heatmap; it shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
+Open **Settings → 中转概览**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A title-free responsive donut chart is vertically centered beside the heatmap; it shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key. Existing `0.2.x` Provider configuration remains a migration fallback.
 
 ### Install
 

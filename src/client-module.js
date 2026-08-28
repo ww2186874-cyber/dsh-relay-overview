@@ -728,7 +728,7 @@ function RelaySettingsSection({ relaySettings, api }) {
 
   return React.createElement('section', { className: 'relay-settings' },
     React.createElement('header', { className: 'relay-settings__header' },
-      React.createElement('h2', null, '中转余额'),
+      React.createElement('h2', null, '中转概览'),
       React.createElement('p', null, '填写中转 URL 和 API Key，即可查询并显示剩余额度。')),
     React.createElement(DailyUsageHeatmap, { enabled: configured && value.baseURL.trim() !== '' }),
     React.createElement('label', { className: 'relay-settings__field' },
@@ -914,13 +914,13 @@ function apply(ctx) {
     name: 'sidebar.footer.action',
     id: 'relay-balance',
     order: -100,
-    label: '中转额度',
+    label: '中转概览',
   }, BalanceIndicator))
   ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section',
     id: 'relay-balance',
     order: 30,
-    label: '中转余额',
+    label: '中转概览',
   }, () => React.createElement(RelaySettingsSection, { relaySettings, api: ctx.connection.api })))
 }
 

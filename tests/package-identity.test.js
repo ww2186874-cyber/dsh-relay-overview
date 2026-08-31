@@ -19,3 +19,15 @@ test('package, Client bundle, Cordis row, and CI smoke test share the Relay Over
   assert.match(workflow, /const packageName = process\.env\.PACKAGE_NAME/)
   assert.equal(workflow.includes('dsh-relay-balance'), false)
 })
+
+test('package targets only the DSH alpha.2 Remote Client surface', () => {
+  assert.equal(packageJson.engines.dsh, '0.1.2-alpha.2')
+  assert.deepEqual(packageJson.dsh.client.inject, [
+    '@deepseek-ai/dsh-api-remotes',
+    '@deepseek-ai/dsh-client-ui-renderer',
+    '@deepseek-ai/dsh-client-ui-settings',
+    '@deepseek-ai/dsh-client-ui-sidebar',
+  ])
+  assert.equal(packageJson.dsh.client.inject.includes('@deepseek-ai/dsh-client-runtime'), false)
+  assert.equal(packageJson.dsh.client.inject.includes('@deepseek-ai/dsh-client-connection'), false)
+})

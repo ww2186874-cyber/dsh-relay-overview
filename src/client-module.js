@@ -400,9 +400,15 @@ function decodeRelaySettings(value) {
   }
 }
 
-function rpcValue(response) {
-  if (response?.result?.ok === true) return response.result.value
-  throw new Error(response?.result?.error?.message || '操作失败')
+function credentialDescribeValue(response) {
+  if (response?.ok === true && typeof response.value === 'object' && response.value !== null && !Array.isArray(response.value)) {
+    return response.value
+  }
+  throw new Error(response?.error?.message || '无法查询 Credential 状态')
+}
+
+async function describeCredentialInfo(credentials, refs) {
+  return credentialDescribeValue(await credentials.describe(refs))
 }
 
 async function callRelayConnection(fetchImpl, route, input, signal) {
@@ -650,7 +656,7 @@ function DailyUsageHeatmap({ enabled }) {
     state.error !== null ? React.createElement('p', { className: 'relay-history__error', role: 'status' }, state.error) : null)
 }
 
-function RelaySettingsSection({ relaySettings, api }) {
+function RelaySettingsSection({ relaySettings, credentials }) {
   const subscribe = React.useCallback((listener) => relaySettings.subscribe(listener), [relaySettings])
   const getSnapshot = React.useCallback(() => relaySettings.getSnapshot(), [relaySettings])
   const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
@@ -668,14 +674,13 @@ function RelaySettingsSection({ relaySettings, api }) {
   React.useEffect(() => {
     let active = true
     const refs = value.credentialRef === '' ? [] : [value.credentialRef]
-    api.credentials.describe({ refs })
-      .then((response) => {
-        const result = rpcValue(response)
-        if (active) setCredentialInfo(result.credentials)
+    describeCredentialInfo(credentials, refs)
+      .then((result) => {
+        if (active) setCredentialInfo(result)
       })
       .catch(() => { if (active) setCredentialInfo(null) })
     return () => { active = false }
-  }, [api, value.credentialRef])
+  }, [credentials, value.credentialRef])
   React.useEffect(() => () => {
     operation.current?.abort()
     operation.current = null
@@ -893,14 +898,14 @@ const css = `
 @media (prefers-reduced-motion:reduce){.relay-overview,.relay-overview__fill,.relay-history__refresh,.relay-history__day::before,.relay-history__tooltip,.relay-model__segment{transition:none}.relay-history__day--loading::before,.relay-model.is-loading .relay-model__empty{animation:none}}
 `
 
-const inject = ['slots', 'connection', 'settingsScope']
+const inject = ['slots', 'remote', 'remote.credentials', 'settingsScope']
 function apply(ctx) {
   if (typeof ctx.slots?.inject !== 'function' || typeof ctx.slots?.register !== 'function') {
     throw new Error('dsh-relay-overview requires slots.inject() and slots.register()')
   }
   if (typeof ctx.settingsScope?.bind !== 'function') throw new Error('dsh-relay-overview requires settingsScope.bind()')
-  if (typeof ctx.connection?.api?.credentials?.describe !== 'function') {
-    throw new Error('dsh-relay-overview requires the DSH connection credentials API')
+  if (typeof ctx.remote?.credentials?.describe !== 'function') {
+    throw new Error('dsh-relay-overview requires the DSH remote.credentials API')
   }
   const relaySettings = ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE, decode: decodeRelaySettings })
   ctx.effect(() => {
@@ -921,7 +926,7 @@ function apply(ctx) {
     id: 'relay-overview',
     order: 30,
     label: '中转概览',
-  }, () => React.createElement(RelaySettingsSection, { relaySettings, api: ctx.connection.api })))
+  }, () => React.createElement(RelaySettingsSection, { relaySettings, credentials: ctx.remote.credentials })))
 }
 
 exports.apply = apply
@@ -935,6 +940,8 @@ exports.createHistoryRequestManager = createHistoryRequestManager
 exports.installRefreshLifecycle = installRefreshLifecycle
 exports.installHistoryRefreshLifecycle = installHistoryRefreshLifecycle
 exports.callRelayConnection = callRelayConnection
+exports.credentialDescribeValue = credentialDescribeValue
+exports.describeCredentialInfo = describeCredentialInfo
 exports.decodeRelaySettings = decodeRelaySettings
 exports.decodeHistoryData = decodeHistoryData
 exports.heatScale = heatScale

@@ -4,74 +4,72 @@
 
 ## 中文
 
-一个永久安装到 DSH Web Profile 的侧栏额度组件。插件采用通用的 **Relay** 身份，当前 `sub2api` 适配器支持 Sub2API 及其兼容实现的 `GET /v1/usage` 响应。
+`dsh-relay-overview` 是安装到 DSH Web Profile 的中转额度与近 30 天使用概览插件。插件采用通用的 **Relay Overview** 身份；当前 `sub2api` 适配器读取 Sub2API 及兼容实现的额度响应。
 
-> “Sub2API-compatible”只表示额度接口协议兼容，不代表中转站一定运行原版 Sub2API。
+此源码树只面向 DSH `0.1.2-alpha.2`，使用该版本的 `ctx.remote.credentials` Client API，不兼容旧版 DSH。
+
+> “Sub2API-compatible”只表示额度接口协议兼容，不代表中转站运行原版 Sub2API，也不说明其源码来源。
 
 ### 功能
 
-- 设置页只需填写 **中转 URL + API Key**，支持测试连接和测试后保存。
-- **中转概览**页显示最近 30 个北京时间自然日的每日实际扣费热力图、模型调用量环形图，以及 30 天累计扣费、请求数和 Token；进入页面自动读取，也可手动刷新。
-- 热力图采用周日在上的 GitHub 式 7 行布局，并在卡片左边缘与中间分隔线之间水平居中；零用量显示主题自适应的中性灰，有用量按四档蓝色色阶逐级加深。悬停、聚焦或触屏点击某天可查看日期、扣费、请求数和 Token。
-- 右侧环形图不显示独立小标题，环形图与图例作为一个整体在热力图高度内垂直居中；它按调用次数显示前 5 个模型，其余合并为“其他模型”。中心显示模型统计总调用数，图例和交互提示显示模型、调用次数及占比；窄屏时图表自动排列到热力图下方。
-- 插件不建立本地历史数据库，只请求并保留当前页面内的最近 30 天；更早数据直接裁掉，上游未返回的日期显示为 0。
-- API Key 由 DSH Credential 服务保存；设置页只显示是否已配置，永远不会读回已存密钥。
-- 展开侧栏只显示 `$剩余/$限额`、百分比和进度条；不显示站点名称或冗余说明。
-- 订阅接口同时提供到期时间和额度窗口起点时，鼠标悬停展开或折叠卡片任意位置都会立即在卡片右侧显示较大字体的 `剩余N天（YYYY/MM/DD HH:mm） DdHh后重置`，且不附加其他内容。
-- 折叠侧栏：真实配额显示百分比环；钱包余额显示金额；不限额显示 `∞`。
-- 支持 API Key 总配额、5 小时/1 日/7 日滚动额度、订阅日/周/月限额、钱包余额和不限额模式。
-- 加载、每 60 秒、页面恢复可见、保存配置和点击时刷新。
-- Client 请求去重和 20 秒超时；Host 上游请求去重和 12 秒超时。
-- 临时错误时保留最后一次成功数据并标记为过期。
+- 在 **Settings → 中转概览** 中配置中转 URL 和 API Key，支持测试连接和测试后保存。
+- 设置页显示今天及此前 29 个北京时间自然日的每日实际扣费热力图，以及 30 天累计扣费、请求数和 Token。
+- 同一卡片显示按请求次数统计的模型环形图：前 5 个模型单列，其余合并为“其他模型”；窄屏时移到热力图下方。
+- 热力图和模型图只使用已保存配置，共用一次本机 `/relay-overview/history` 请求；插件不建立本地历史数据库。
+- API Key 由 DSH Credential 服务保存。浏览器只查询 Credential 是否已配置，不能通过本插件读回已保存的值。
+- 展开侧栏显示 `$剩余/$限额`、百分比和进度条，不显示 Provider、站点名或冗余标签。
+- 折叠侧栏中，真实配额显示百分比环，钱包余额显示金额，不限额显示 `∞`。
+- 订阅数据同时包含到期时间和有效额度窗口起点时，悬停或聚焦侧栏卡片会显示 `剩余N天（YYYY/MM/DD HH:mm） DdHh后重置`。
+- 余额在组件加载、每 60 秒、页面恢复可见、保存配置和用户点击时刷新；临时失败会保留最后一次成功数据并标记为过期。
+- Client 本机请求超时为 20 秒；Host 上游请求超时为 12 秒，并对并发的同类查询做去重。
 
-### 正确的额度语义
+### 额度语义
 
-插件不会再使用 `remaining + usage.total.actual_cost` 为所有站点虚构“总额度”：
+插件不会把 `remaining + usage.total.actual_cost` 统一解释为所有模式的“总额度”：
 
-- `quota_limited`：优先使用 `quota.limit / quota.used / quota.remaining`；若同时存在滚动额度，显示当前剩余金额最小的约束。
-- 订阅：从已配置的日/周/月窗口中显示剩余金额最小的约束。
-- 钱包：只把 `remaining`/`balance` 作为当前余额；`usage.total.actual_cost` 仅标记为当前 Key 的累计消费。
-- 不限额：明确显示“不限额”，不生成伪造百分比。
+- **Key 配额**：优先使用 `quota.limit / quota.used / quota.remaining`；若同时存在滚动限制，选择剩余金额最小的有效约束。
+- **订阅**：在已配置的日、周、月额度窗口中选择剩余金额最小的约束。
+- **钱包**：`remaining` 或 `balance` 是当前钱包余额；`usage.total.actual_cost` 只是当前 Key 的累计消费，不是钱包原始总额。
+- **不限额**：明确显示不限额，不伪造总额或百分比。
+- **异常数据**：未知、自相矛盾或越界的数据会安全失败，而不是猜测额度。
 
 ### 要求
 
-- DSH `>= 0.1.0-rc.8`
-- Node.js `>= 22.19.0`
-- 中转站提供 Sub2API-compatible 额度接口；只有 OpenAI-compatible 模型接口、没有额度接口的站点无法查询余额
+以 [`package.json`](package.json) 的 `engines` 为准。当前声明为：
+
+- DSH `0.1.2-alpha.2`（仅此版本）
+- Node.js `>=22.19.0`
+- 中转站提供 Sub2API-compatible 额度接口；只有 OpenAI-compatible 模型接口、没有额度接口的站点无法查询余额或历史聚合
+
+### 安装
+
+此 Alpha 2 适配版位于本地源码目录 `C:\dsh-plugins-alpha2\dsh-relay-overview`。使用 DSH Alpha 2 自己的 CLI 安装到 Alpha 2 Home：
+
+```powershell
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web add 'C:\dsh-plugins-alpha2\dsh-relay-overview'
+```
+
+普通安装无需手工编辑 Profile YAML；CLI 会添加本地包依赖、Profile bundle，并应用包内 Composition patch。
+
+安装完成后，需要由用户重启现有 DSH Web 进程并刷新其页面，使新的 Host 和 Client 插件载入。不要另起 Vite Server 代替现有 GUI。插件载入后，普通配置保存会实时生效，不需要每次保存都重启。
 
 ### 使用
 
 1. 打开 DSH Web 的 **Settings**。
 2. 进入 **中转概览**。
-3. 填写中转 URL，例如 `https://relay.example/v1`。
+3. 填写 HTTPS 中转 URL，例如 `https://relay.example/v1`。
 4. 填写 API Key。
-5. 点击 **测试连接**；确认余额解析正确后，点击 **测试并保存**。
+5. 点击 **测试连接**；确认额度解析正确后，点击 **测试并保存**。
 
-保存后的 API Key 不会回填到浏览器。只在同一个 HTTPS origin 内修改路径时，可以把 API Key 留空并继续使用现有密钥；切换到另一个中转站（origin 改变）时必须填写新 Key。
+保存成功后，API Key 草稿会从输入框状态清空，不会从 Host 回填。仅在 HTTPS origin 相同、只修改路径时，才可以留空 API Key 并复用现有密钥；改变 origin 时必须填写新 Key。
 
-### 安装
+### 高级 Composition 配置
 
-从 npm 安装（发布到 npm 后）：
+正常使用无需手工编辑 YAML。包内 [`cordis.patch.yml`](cordis.patch.yml) 已提供默认 row；设置页将用户配置写入 DSH Settings。
 
-```powershell
-dsh plugin --profile web add dsh-relay-overview
-```
-
-从 GitHub 安装：
-
-```powershell
-dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-overview
-```
-
-本地开发安装：
-
-```powershell
-dsh plugin --profile web add C:\path\to\dsh-relay-overview
-```
-
-正常使用无需编辑 YAML，安装并重启现有 DSH Web 后，直接在 **Settings → 中转概览** 中配置。
-
-以下 Cordis row 仅供高级部署。**Profile patch 覆盖 row config 时会替换整个 `config`，所以必须重述所有键：**
+如需在 Profile patch 中覆盖 row，请重述完整 `config`，因为 row 覆盖会替换整个配置对象：
 
 ```yaml
 - id: relay-overview
@@ -83,52 +81,65 @@ dsh plugin --profile web add C:\path\to\dsh-relay-overview
     allowRemote: false
 ```
 
-配置项：
-
 | 键 | 默认值 | 含义 |
 |---|---|---|
-| `displayName` | `Relay` | 仅用于可访问性/兼容数据；当前简约卡片不显示名称 |
-| `baseURL` | 空 | 可选的 composition 层 URL；通常由设置页写入用户 Settings 层 |
-| `credentialRef` | 空 | 与 `baseURL` 配对的 Credential reference；不是 API Key 明文 |
-| `usagePath` | `auto` | 自动尝试 `<baseURL>/usage` 及常见 `/v1/usage` 变体 |
-| `allowRemote` | `false` | 是否允许非回环客户端访问状态接口；测试和保存接口始终仅限直接回环 |
+| `displayName` | `Relay` | 用于可访问性和归一化数据；当前侧栏不显示名称 |
+| `baseURL` | 空 | 可选的 Composition 层中转 URL；通常由设置页写入 Settings 层 |
+| `credentialRef` | 空 | 与 `baseURL` 配对的 Credential reference，不是 API Key 明文 |
+| `usagePath` | `auto` | 自动尝试基于 `baseURL` 推导的 `/usage` 与 `/v1/usage` 候选路径 |
+| `allowRemote` | `false` | 仅放宽余额状态接口的直接回环限制；不会放宽历史、测试或保存接口，也不会增加身份认证 |
 
-验证最终 composition：
+验证最终 Composition（该命令会按 Alpha 2 CLI 的正常行为准备 Profile 并重写生成的 `cordis.yml`）：
 
 ```powershell
-dsh --profile web --dump-config
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh --profile web --dump-config
 ```
-
-然后重启**现有** DSH Web 进程并刷新 `http://127.0.0.1:3080`。不要另起 Vite Server 代替现有 GUI。
 
 ### 安全边界
 
-- 新 API Key 只会在密码输入框和一次同源写入/连接测试请求中短暂存在；保存后立即清空。Host 以后通过 `credentials.resolve()` 在每次真实上游查询时重新解析，浏览器不能读回已存值。
-- 非敏感 URL/credential reference 写入 DSH Settings；实际 API Key 写入 DSH Credential provider（本地 provider 默认使用受限权限的 `.credentials.yaml`，不是浏览器存储或插件 YAML）。
-- 上游只允许 HTTPS，拒绝 URL userinfo、query 和 fragment；改变 URL 等同于改变 API Key 的接收方，因此保存前必须先测试连接。
-- 上游请求使用 `redirect: 'error'`，并防御性拒绝 `redirected` 和 HTTP 3xx。
-- 响应正文同时受 `Content-Length` 和实际流式字节数的 1 MiB 限制，使用严格 UTF-8 解码。
-- `/relay-overview/status` 默认只接受直接回环连接；包含每日费用/请求/Token 聚合的 `/relay-overview/history` 始终只接受直接回环连接；`/relay-overview/test` 和会修改 Settings/Credential 的 `/relay-overview/save` 始终只接受直接回环 JSON POST。TCP peer 和 `Host` 都必须是 loopback，且请求不能携带常见代理转发头；同时拒绝跨站浏览器请求。
-- 这沿用 DSH rc.8 对本机 Web API 的信任边界，不是独立的用户认证系统，不能抵御已经能直接调用本机 DSH loopback API 的恶意进程。不要在不信任的多人系统账户中使用；本机反向代理也必须在代理层完成身份认证。`allowRemote: true` 只放宽余额状态接口，不会放宽历史、测试或保存接口。
-- 公共错误经过脱敏，不回传上游正文或原始异常。
+- 浏览器只请求本机相对路由 `/relay-overview/status`、`/relay-overview/history`、`/relay-overview/test` 和 `/relay-overview/save`，不会直接请求用户填写的上游 URL。
+- 新输入的 API Key 只会出现在密码输入状态和本机 test/save JSON 请求中。测试成功但尚未保存时，草稿会保留在输入框中；保存成功后会清空。
+- Host 在真实上游查询时通过 DSH Credential 服务解析密钥，并把它作为 Bearer Token 发送给用户配置的中转站。实际 Credential 存储方式由当前 DSH Credential provider 决定。
+- 上游 URL 必须使用 HTTPS，并拒绝 userinfo、query 和 fragment；重定向被拒绝。改变 URL origin 等同于改变 API Key 接收方，因此保存前必须测试且必须提供新 Key。
+- **SSRF / 内网边界**：插件允许用户配置任意符合上述格式的 HTTPS 主机，目前不阻止回环、私网、链路本地或 DNS 解析到内部地址的目标，也不提供 DNS rebinding 隔离。能够调用本机设置接口的主体应被视为高信任主体；只配置你信任的中转地址。
+- 上游响应同时受 `Content-Length` 和实际读取字节数的 1 MiB 限制，并经过 JSON 解析与字段白名单化；未知异常和上游正文不会原样返回浏览器。
+- `/relay-overview/status` 默认只接受直接回环请求；`/relay-overview/history`、`/relay-overview/test` 和 `/relay-overview/save` 始终只接受直接回环请求。测试和保存还要求 JSON POST，并拒绝检测到的跨站请求及常见代理转发头。
+- 上述回环防护沿用 DSH 本机 Web API 的信任边界，不是独立用户认证，不能抵御已经可以直接调用本机 DSH API 的恶意进程。多人系统账户或本机反向代理部署需要额外的操作系统/代理层访问控制。
+- `allowRemote: true` 只公开归一化后的余额状态接口；该接口没有由插件提供的额外认证。历史、测试和保存接口不受此开关影响。
+- 托管 Credential 使用由精确 origin 派生的 A/B 双槽。保存流程串行执行连接测试、密钥暂存、带 revision 的 Settings 切换和旧托管槽清理；不会广泛枚举或删除其他 Credential。
 
-### 支持的 Sub2API 数据形状
+### 支持的 Sub2API 数据
 
-当前适配器读取：
+额度适配器会读取并验证以下数据（字段是否必需取决于额度模式）：
 
-- `isValid`, `mode`, `planName`, `unit`
-- `quota.limit`, `quota.used`, `quota.remaining`
-- `rate_limits[].window/limit/used/remaining/reset_at`
-- `subscription.daily_*`, `subscription.weekly_*`, `subscription.monthly_*`
-- `subscription.expires_at`, `subscription.weekly_window_start`, `subscription.monthly_window_start`
+- `isValid`（必须为 `true`）
+- 可选元数据 `mode`、`planName`、`unit`
+- `quota.limit`、`quota.remaining`，以及可选的 `quota.used`
+- `rate_limits[].limit`，以及可选的 `used`、`remaining`、`window`、`reset_at`；已知窗口 `5h`、`1d`、`7d` 会保留对应语义，其他窗口归一化为通用窗口
+- `subscription.daily_usage_usd` / `daily_limit_usd`
+- `subscription.weekly_usage_usd` / `weekly_limit_usd` / `weekly_window_start`
+- `subscription.monthly_usage_usd` / `monthly_limit_usd` / `monthly_window_start`
+- `subscription.expires_at`
 - `balance` / `remaining`
 - `usage.total.actual_cost`
-- `daily_usage[].date/actual_cost/requests/total_tokens`（设置页近 30 天热力图）
-- `model_stats[].model/requests`（设置页前 5 名＋其他模型调用量）
+- `daily_usage[].date/actual_cost/requests/total_tokens`
+- 可选的 `model_stats[].model/requests`
 
-历史查询固定使用 `days=30&timezone=Asia/Shanghai`，并把相同的 30 个起止日期作为 `start_date` 与 `end_date` 传给模型统计。Sub2API 当前只对 `daily_usage` 应用 `timezone` 参数；`model_stats` 的日期边界由中转站服务器配置时区解释，因此非 `Asia/Shanghai` 部署的模型统计绝对时间边界可能与每日热力图略有偏差。Host 只向浏览器返回经过验证的每日聚合、30 天汇总，以及白名单化的模型名与调用次数；不会转发原始 `model_stats`、模型 Token/成本、`account_cost`、原始响应或逐请求记录。模型统计缺失或不兼容时，热力图仍可独立显示。
+历史接口固定请求 `days=30&timezone=Asia/Shanghai`，并把同一组 30 个日期标签作为 `start_date` 和 `end_date` 传给上游。Host 会裁掉更早的每日数据，并把缺失日期补为 0。
 
-不同 Fork 可能修改接口；请提交一个经过脱敏的响应字段结构和版本信息，而不是提交真实 Key 或完整敏感正文。
+Sub2API 当前只对 `daily_usage` 应用 `timezone`；`model_stats` 的日期边界由中转站服务器时区解释。因此，非 `Asia/Shanghai` 部署的模型统计绝对时间边界可能与热力图略有不同。
+
+返回浏览器的历史数据只包含：
+
+- 30 个连续日期的 `date`、`actualCost`、`requests`、`totalTokens`
+- 30 天汇总
+- 最多前 5 个模型的 `model` 和 `requests`，以及合并后的其他模型请求数
+
+`model_stats` 缺失、超过 500 行或格式无效时，模型图会降级为不可用，但不会破坏有效的每日热力图。插件不会返回原始响应、逐请求记录、模型 Token/成本或 `account_cost`。
+
+不同 Fork 可能改变接口。报告兼容问题时，请只提供脱敏后的字段结构和版本信息，不要提交真实 API Key 或完整敏感响应。
 
 ### 开发与验证
 
@@ -139,32 +150,36 @@ pnpm verify
 pnpm pack --dry-run
 ```
 
-- Host：`lib/index.js`
-- Client 源码：`src/client-module.js`
-- 生成产物：`lib/client.js`
-- 生成器：`scripts/build-client.js`
-- 非写入式生成物检查：`scripts/check-client.js`
+- Host：[`lib/index.js`](lib/index.js)
+- Client 源码：[`src/client-module.js`](src/client-module.js)
+- Client 生成产物：[`lib/client.js`](lib/client.js)
+- 生成器：[`scripts/build-client.js`](scripts/build-client.js)
+- 非写入式生成物检查：[`scripts/check-client.js`](scripts/check-client.js)
 
-`pnpm verify` 不会自动重写 Client 产物；过期时会失败，要求先运行 `pnpm bundle` 并提交生成结果。
+修改 Client 源码后必须运行 `pnpm bundle`。`pnpm verify` 只检查生成产物是否同步，不会自动重写它。
+
+生产依赖由 [`pnpm-lock.yaml`](pnpm-lock.yaml) 锁定。包没有 `preinstall`、`install` 或 `postinstall` 脚本；`prepack` 只在打包时运行验证。发布白名单只包含 Host、Client 生成产物、Composition patch、README、LICENSE 和 `package.json`。
 
 ### DSH 升级检查
 
-升级 DSH 后运行测试、检查 composition，并确认：
+插件使用公开 Slot：
 
-1. 展开侧栏中 Relay 是完整的 footer row；
-2. 折叠侧栏中 Relay、Cordis 和 Settings 仍纵向排列；
-3. 点击、分钟、可见性和超时刷新正常；
-4. `/relay-overview/status` 与 `/relay-overview/history` 都只返回归一化后的公开字段；热力图仍显示连续 30 天，模型环形图仍只接收模型名和调用次数。
+- `sidebar.footer.action`，接收侧栏的 `wide` owner prop
+- `settings.section`
 
-组件使用公开 Slot `sidebar.footer.action` 和 owner prop `wide`。两条窄范围的 `:has()` 兼容规则只依赖公开 `data-slot` 标记，用于适配 rc.8 的 `display: contents` Slot wrapper。
+当前样式还使用 Slot renderer 输出的 `data-slot` 作为窄范围布局锚点。DSH 升级后应重新运行 `pnpm verify` 和 Composition dump，并在实际 GUI 中确认 Slot、Settings、Credential API、侧栏展开/折叠布局、30 天历史和刷新生命周期仍兼容。测试通过只说明已覆盖路径，不是对未来 Runtime 的兼容保证。
 
 ### 卸载
 
 ```powershell
-dsh plugin --profile web remove dsh-relay-overview
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web remove dsh-relay-overview
 ```
 
-同时删除 Profile `cordis.patch.yml` 中针对 `relay-overview` 的覆盖，然后重启 DSH Web。
+仅当你曾在 Profile `cordis.patch.yml` 中手工添加 `relay-overview` 覆盖时，才需要同时删除该覆盖。随后由用户重启现有 DSH Web 进程并刷新页面。
+
+插件当前没有卸载清理钩子；移除包不会主动删除已保存的 Settings 或插件托管 Credential。不要为清理插件而删除或重置整个 `.dsh-alpha2` 或 `.dsh` 目录。
 
 ### 许可证
 
@@ -174,29 +189,50 @@ MIT License。详见 [LICENSE](LICENSE)。
 
 ## English
 
-A permanent DSH Web Profile sidebar quota indicator. The package has a generic **Relay** identity; its first adapter supports the `GET /v1/usage` contract exposed by Sub2API and compatible implementations.
+`dsh-relay-overview` is a relay quota and recent-usage overview installed into a DSH Web Profile. It has a generic **Relay Overview** identity. Its current `sub2api` adapter reads the quota contract exposed by Sub2API and compatible implementations.
 
-“Sub2API-compatible” describes an API contract. It does not prove that a relay runs the original Sub2API source.
+This source tree targets only DSH `0.1.2-alpha.2` and uses that version's `ctx.remote.credentials` Client API. It is not compatible with older DSH releases.
 
-### Configure
+“Sub2API-compatible” describes an API contract; it does not establish which source code a relay runs.
 
-Open **Settings → 中转概览**, enter the relay URL and API key, test the connection, and save. The page includes a GitHub-style heatmap for today plus the previous 29 Asia/Shanghai calendar days, with theme-adaptive neutral-gray zero-use cells and four progressively darker blue usage levels. A title-free responsive donut chart is vertically centered beside the heatmap; it shows the top five models by request count and combines the remainder as Other, together with 30-day cost, request, and token aggregates. Sub2API interprets the model-stat date labels in the relay server's configured timezone, while the daily heatmap explicitly uses Asia/Shanghai, so non-Shanghai deployments can have a small absolute-boundary difference. It fetches upstream aggregates on demand and does not create a local history database. The key is written through the DSH Credentials API and is never read back into the browser. A blank key may be reused only when changing the path within the same HTTPS origin; changing relay origin requires a new key.
+### Features
+
+- Configure a relay URL and API key in **Settings → 中转概览**, test the connection, and save.
+- Show a Sunday-first heatmap for today plus the previous 29 Asia/Shanghai calendar days, with 30-day cost, request, and token totals.
+- Show the top five models by request count and combine the remainder as Other.
+- Fetch history only from a saved configuration and keep no local history database.
+- Keep stored keys in the DSH Credential service; the browser can check configuration status but cannot read a saved value through this plugin.
+- Show quota percentage, wallet balance, or an unlimited state in the sidebar, refreshing on load, every 60 seconds, on visibility restoration, after save, and on click.
+
+Daily usage explicitly requests `timezone=Asia/Shanghai`. Model-stat date labels are interpreted in the relay server's configured timezone, so a non-Shanghai server can produce a small absolute-boundary difference between the heatmap and model totals.
+
+### Requirements
+
+The authoritative constraints are in [`package.json`](package.json):
+
+- DSH `0.1.2-alpha.2` only
+- Node.js `>=22.19.0`
+- A Sub2API-compatible quota endpoint; an OpenAI-compatible model endpoint alone is not sufficient
 
 ### Install
 
-From npm after the package has been published:
+This Alpha 2 adaptation lives at `C:\dsh-plugins-alpha2\dsh-relay-overview`. Install it into the Alpha 2 home with the matching CLI:
 
-```sh
-dsh plugin --profile web add dsh-relay-overview
+```powershell
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web add 'C:\dsh-plugins-alpha2\dsh-relay-overview'
 ```
 
-Or install directly from GitHub:
+The CLI adds the local dependency and Profile bundle and applies the package Composition patch; normal installation does not require a manual Profile YAML edit.
 
-```sh
-dsh plugin --profile web add github:ww2186874-cyber/dsh-relay-overview
-```
+After installation, the user must restart the existing DSH Web process and refresh its page so the new Host and Client plugin are loaded. Do not use a separate Vite server as a replacement for the existing GUI. Once loaded, ordinary settings saves apply without another restart.
 
-No YAML edit is required for normal use. For advanced composition, a complete row override is:
+### Configure
+
+Enter an HTTPS relay URL and API key, test, then save. A saved key is never filled back into the browser. A blank key can be reused only when changing the path within the same HTTPS origin; changing origin requires a new key.
+
+For an advanced Profile override, repeat the complete config object:
 
 ```yaml
 - id: relay-overview
@@ -208,22 +244,34 @@ No YAML edit is required for normal use. For advanced composition, a complete ro
     allowRemote: false
 ```
 
+A Profile row override replaces the entire `config`. Validate the result with the matching Alpha 2 CLI (the command prepares the Profile and rewrites its generated `cordis.yml` as part of normal CLI behavior):
 
-Restart the existing DSH Web process after installation; settings changes apply live.
+```powershell
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh --profile web --dump-config
+```
+
+### Security boundary
+
+- The browser calls only the same-origin local Host routes under `/relay-overview/*`; it never calls the configured upstream directly.
+- The Host resolves the stored credential and sends it as a Bearer token only to the user-configured relay endpoint.
+- Upstream URLs must use HTTPS and may not contain userinfo, a query, or a fragment. Redirects are rejected, response bodies are limited to 1 MiB, and public errors are sanitized.
+- **SSRF/private-network boundary:** any syntactically valid HTTPS host is currently allowed. The plugin does not block loopback, private, link-local, or DNS-to-private targets and does not provide DNS-rebinding isolation. Treat the ability to call the local settings routes as privileged and configure only trusted relay endpoints.
+- Status is direct-loopback-only by default. History, test, and save always remain direct-loopback-only. These checks follow the local DSH Web API trust boundary; they are not independent authentication against malicious local processes.
+- `allowRemote: true` relaxes only the normalized status route and adds no plugin-level authentication. It never relaxes history, test, or save.
+- Stored keys use origin-derived A/B managed Credential slots and a revision-fenced Settings switch. The plugin does not enumerate or broadly delete unrelated credentials.
 
 ### Quota semantics
 
-- Key quota: uses `quota.limit`, `quota.used`, and `quota.remaining`.
-- Rolling limits: uses the active 5-hour/day/7-day constraint with the smallest remaining amount.
-- Subscription: uses the configured daily/weekly/monthly constraint with the smallest remaining amount. When the upstream supplies expiry and window-start timestamps, hovering anywhere on either the expanded or collapsed card immediately shows only the subscription days/date and quota-reset countdown in a larger tooltip to the card's right.
-- Wallet: displays the current wallet balance; cumulative key spend is not treated as an original total.
-- Unlimited: displays an explicit unlimited state and no fabricated percentage.
+- Key quota uses `quota.limit`, `quota.remaining`, and optional `quota.used`.
+- When key quota and rolling limits coexist, the valid constraint with the smallest remaining amount is selected.
+- Subscription mode selects the smallest remaining configured daily, weekly, or monthly allowance.
+- Wallet mode displays the current balance; cumulative key spend is not treated as an original total.
+- Unlimited mode has no fabricated total or percentage.
+- Unknown or inconsistent upstream data fails validation instead of being guessed.
 
-### Security
-
-A newly typed key crosses the same-origin Host wire only in a test/save request, then the password draft is cleared. The Host performs credential staging and the revision-fenced Settings switch; stored keys are never read back by the browser and are resolved on the Host for every real upstream query. Upstream URLs must use HTTPS; redirects are rejected; response bodies are limited to 1 MiB and decoded as strict UTF-8. Public errors are sanitized.
-
-By default the status route accepts only direct loopback requests. The history route always remains loopback-only because it carries daily cost/request/token aggregates. The test and settings/credential-mutating save routes always require a loopback peer and Host, no common proxy-forwarding headers, and no cross-site browser signal. This follows the DSH rc.8 local Web API trust boundary; it is not separate user authentication and does not defend against a malicious process that can directly call the local DSH loopback API. A local reverse proxy therefore counts as remote deployment and must enforce authentication. `allowRemote: true` relaxes only the balance status route, never history, test, or save.
+History output contains only 30 validated daily aggregates, a summary, and model name/request aggregates for the top five models plus Other. Raw responses, per-request records, model token/cost fields, and `account_cost` are not returned to the browser. Invalid optional model statistics degrade independently from valid daily history.
 
 ### Development
 
@@ -233,6 +281,20 @@ pnpm bundle
 pnpm verify
 pnpm pack --dry-run
 ```
+
+Client source lives in [`src/client-module.js`](src/client-module.js); [`lib/client.js`](lib/client.js) is its generated artifact. Run `pnpm bundle` after Client changes. The package has no install lifecycle script; `prepack` runs verification for maintainers.
+
+Runtime integration uses the public `sidebar.footer.action` and `settings.section` Slots. After a DSH upgrade, rerun verification and Composition dump, then check the actual GUI, Settings/Credential APIs, sidebar layout, history data, and refresh lifecycle.
+
+### Uninstall
+
+```powershell
+$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
+$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web remove dsh-relay-overview
+```
+
+Remove a `relay-overview` Profile patch only if you added one manually, then have the user restart the existing DSH Web process and refresh the page. There is currently no uninstall cleanup hook, so removing the package does not actively delete saved Settings or managed Credentials. Never delete or reset the entire `.dsh-alpha2` or `.dsh` directory to clean up this plugin.
 
 ### License
 

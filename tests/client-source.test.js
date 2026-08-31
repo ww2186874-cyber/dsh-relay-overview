@@ -706,7 +706,7 @@ test('unlimited rendering is explicit and remains accessible', () => {
   assert.match(wide.props['aria-label'], /不限额/)
 })
 
-test('client source preserves lifecycle, generic Slot identity, and rc8 layout compatibility', () => {
+test('client source preserves lifecycle, generic Slot identity, and Alpha2 Slot layout compatibility', () => {
   assert.match(source, /CLIENT_TIMEOUT_MS = 20_000/)
   assert.match(source, /visibilitychange/)
   assert.match(source, /manager\.abort\(\)/)
@@ -720,7 +720,7 @@ test('client source preserves lifecycle, generic Slot identity, and rc8 layout c
   assert.equal(source.includes('hHd-Xa_'), false)
 })
 
-test('client uses write-only credential APIs and never calls an upstream URL directly', () => {
+test('client only describes credentials through Remote and never calls an upstream URL directly', () => {
   for (const text of [source, built]) {
     assert.equal(text.includes('TEST_ONLY_SECRET_DO_NOT_USE'), false)
     assert.equal(text.includes('apiKeyEnv'), false)
@@ -731,11 +731,50 @@ test('client uses write-only credential APIs and never calls an upstream URL dir
     assert.match(text, /\/relay-overview\/history/)
     assert.match(text, /\/relay-overview\/test/)
     assert.match(text, /\/relay-overview\/save/)
-    assert.match(text, /api\.credentials\.describe/)
-    assert.equal(text.includes('api.credentials.set'), false)
+    assert.match(text, /remote\.credentials/)
+    assert.match(text, /credentials\.describe\(refs\)/)
+    assert.equal(text.includes('remote.credentials.set'), false)
+    assert.equal(text.includes('connection.api.credentials'), false)
+    assert.equal(text.includes('ctx.connection'), false)
     assert.match(text, /type: 'password'/)
     assert.match(text, /callRelayConnection\(fetch/)
   }
+})
+
+test('credential Remote receives positional refs and handles success, failure, and rejection', async () => {
+  const refs = ['DSH_RELAY_OVERVIEW_TEST_A']
+  const value = {
+    DSH_RELAY_OVERVIEW_TEST_A: {
+      configured: true,
+      writable: true,
+      source: 'local',
+    },
+  }
+  const seen = []
+  assert.equal(await clientExports.describeCredentialInfo({
+    async describe(input) {
+      seen.push(input)
+      return { ok: true, value }
+    },
+  }, refs), value)
+  assert.deepEqual(seen, [refs])
+
+  await assert.rejects(() => clientExports.describeCredentialInfo({
+    async describe() {
+      return {
+        ok: false,
+        error: {
+          code: 'gateway/internal',
+          message: 'Credential provider is unavailable',
+          details: {},
+        },
+      }
+    },
+  }, refs), /Credential provider is unavailable/)
+  await assert.rejects(() => clientExports.describeCredentialInfo({
+    async describe() { throw new Error('Remote namespace is not mounted') },
+  }, refs), /Remote namespace is not mounted/)
+  assert.throws(() => clientExports.credentialDescribeValue({ ok: true, value: [] }), /无法查询 Credential 状态/)
 })
 
 test('settings helper sends test and save payloads only to local Host routes', async () => {
@@ -779,12 +818,13 @@ test('Client apply owns styles and registers both sidebar and settings entries',
     settingsScope: {
       bind(options) { assert.equal(options.namespace, 'dsh-relay-overview'); return scope },
     },
-    connection: { api: { credentials: { describe() {} } } },
+    remote: { credentials: { describe() {} } },
     slots: {
       inject(name, factory) { injected.set(name, factory) },
       register(options, value) { registrations.push({ options, value }); return () => {} },
     },
   })
+  assert.deepEqual(Array.from(client.inject), ['slots', 'remote', 'remote.credentials', 'settingsScope'])
   assert.equal(appended.length, 1)
   assert.equal(appended[0].dataset.plugin, 'dsh-relay-overview')
   assert.match(appended[0].textContent, /\.relay-overview/)
@@ -807,4 +847,15 @@ test('Client apply owns styles and registers both sidebar and settings entries',
 test('Client compatibility check rejects incomplete required services', () => {
   assert.throws(() => clientExports.apply({ slots: {}, effect() {} }), /slots\.inject.*slots\.register/)
   assert.throws(() => clientExports.apply({ slots: { inject() {}, register() {} }, effect() {} }), /settingsScope\.bind/)
+  assert.throws(() => clientExports.apply({
+    slots: { inject() {}, register() {} },
+    settingsScope: { bind() {} },
+    effect() {},
+  }), /remote\.credentials/)
+  assert.throws(() => clientExports.apply({
+    slots: { inject() {}, register() {} },
+    settingsScope: { bind() {} },
+    remote: {},
+    effect() {},
+  }), /remote\.credentials/)
 })

@@ -9,15 +9,16 @@
 - 当前首个适配器：`sub2api`。
 - “Sub2API-compatible”只表示额度接口协议兼容，不代表目标站点运行原版 Sub2API，也不能据此声称其源码来源。
 - 这是永久安装到 DSH Web Profile 的 Cordis Profile Bundle，不是仅在当前进程中存在的 Dynamic Cordis Plugin。
-- 插件源码仓库的固定位置：`C:\Users\12187\.dsh\profiles\web\packages\dsh-relay-overview`
-- Web Profile composition：`C:\Users\12187\.dsh\profiles\web\cordis.yml` 及其 `cordis.patch.yml`。
+- 此分支源码固定位置：`C:\dsh-plugins-alpha2\dsh-relay-overview`。
+- 仅支持 DSH `0.1.2-alpha.2`，不兼容旧版 DSH；Client Credential API 使用 `ctx.remote.credentials`。
+- 目标 Web Profile composition：`C:\Users\12187\.dsh-alpha2\profiles\web\cordis.yml` 及其 `cordis.patch.yml`。
 - 插件 row id：`relay-overview`。
 
 ## 2. DSH Runtime 与插件源码的边界
 
 - DeepSeek Harness（DSH）Runtime 和本插件是两个分开存放、分开维护的项目。
 - DSH Runtime 安装在 `C:\Users\12187\AppData\Local\dsh-runtime\<版本目录>`；版本升级可能更换该版本目录。
-- 插件源码位于 Web Profile 的 `packages\dsh-relay-overview`，正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
+- 插件源码独立位于 `C:\dsh-plugins-alpha2\dsh-relay-overview`，不放进 Profile 或 Runtime；正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
 - 不要从某个旧版本号推断当前 Runtime 路径。需要检查 DSH 本体时，先确认当前实际版本和 checkout。
 - DSH 升级不会自动改变插件源码，但可能改变插件依赖的 Service、Slot、Settings、Client Runtime、构建产物协议或页面布局。因此“源码未变”不等于“运行兼容性必然不变”。升级后必须执行本文件的兼容性检查。
 - 只有在用户明确要求修改 DSH 本体时，才可以编辑 Runtime checkout。不要为了实现插件功能而偷偷修改已安装的 DSH 文件。
@@ -48,7 +49,7 @@
 - 保存后不得把 API Key 回填到浏览器。
 - 只有 HTTPS origin 相同、仅路径发生变化时，才允许 API Key 留空并复用现有密钥；切换 origin 时必须填写新 Key。
 - 当前 Settings section id 为 `relay-overview`，面向用户的 label 与设置页标题均为 `中转概览`；包名、插件 ID、Settings namespace 和通用产品身份保持不变。
-- 自定义 Settings 导航图标是否受支持取决于当前 DSH Settings Shell 的公开协议。旧版 rc.8 仅按内置 section id 选择图标，未知 id 回退为齿轮；在新 Runtime 上实现图标前必须重新检查，不要使用冒充保留 id 或脆弱的 DOM/CSS 替换。
+- 自定义 Settings 导航图标是否受支持取决于当前 DSH Settings Shell 的公开协议。在后续 Runtime 上实现图标前必须重新检查，不要使用冒充保留 id 或脆弱的 DOM/CSS 替换。
 
 ## 4. 架构
 
@@ -73,15 +74,15 @@
   - `sidebar.footer.action`
   - `settings.section`
 - 浏览器只调用本机 Host 路由，不得直接请求用户填写的上游中转 URL。
-- 浏览器可以查询 Credential 是否已配置，但不得读取已存密钥，也不得自行调用 Credential 写入/删除 API。
+- 浏览器通过 `ctx.remote.credentials.describe(refs)` 查询 Credential 是否已配置，处理 `{ ok, value/error }` RemoteResult；不得读取已存密钥，也不得自行调用 Credential 写入/删除 API。
 - Client 代码修改后先运行 `pnpm bundle`；不得手工修改 `lib/client.js` 来绕过生成流程。
 
 ### Composition
 
 - 包内默认 row：`cordis.patch.yml`。
-- Web Profile 的部署覆盖：`C:\Users\12187\.dsh\profiles\web\cordis.patch.yml`。
+- Web Profile 的部署覆盖：`C:\Users\12187\.dsh-alpha2\profiles\web\cordis.patch.yml`。
 - Profile patch 覆盖 row config 时会替换整个 `config`，所以覆盖项必须重述完整配置键。
-- 修改 composition 前应加载 `editing-cordis-compositions` skill，并按当前 DSH 的 composition 规则验证。
+- 修改 Composition 前必须检查当前 Alpha 2 的 Composition 规则，并使用匹配版本的 DSH CLI 执行 dump/validation。
 
 ## 5. 额度语义不变量
 

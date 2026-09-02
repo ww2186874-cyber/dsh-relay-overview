@@ -6,7 +6,7 @@
 
 `dsh-relay-overview` 是安装到 DSH Web Profile 的中转额度与近 30 天使用概览插件。插件采用通用的 **Relay Overview** 身份；当前 `sub2api` 适配器读取 Sub2API 及兼容实现的额度响应。
 
-此源码树只面向 DSH `0.1.2-alpha.2`，使用该版本的 `ctx.remote.credentials` Client API，不兼容旧版 DSH。
+此源码树只面向并已审计 DSH `0.1.2-alpha.5`，使用该版本的 `ctx.remote.credentials` Client API，不兼容其他 DSH 版本。
 
 > “Sub2API-compatible”只表示额度接口协议兼容，不代表中转站运行原版 Sub2API，也不说明其源码来源。
 
@@ -37,18 +37,18 @@
 
 以 [`package.json`](package.json) 的 `engines` 为准。当前声明为：
 
-- DSH `0.1.2-alpha.2`（仅此版本）
+- DSH `0.1.2-alpha.5`（仅此版本）
 - Node.js `>=22.19.0`
 - 中转站提供 Sub2API-compatible 额度接口；只有 OpenAI-compatible 模型接口、没有额度接口的站点无法查询余额或历史聚合
 
 ### 安装
 
-此 Alpha 2 适配版位于本地源码目录 `C:\dsh-plugins-alpha2\dsh-relay-overview`。使用 DSH Alpha 2 自己的 CLI 安装到 Alpha 2 Home：
+此 Alpha 5 适配版源码位于 `C:\DSH-Versions\0.1.2-alpha.5\plugins\dsh-relay-overview`。完成 `pnpm verify`、`pnpm run verify:runtime` 和打包检查后，将生成的固定版本 tarball 保存到本版本 `plugin-packages`，再使用 DSH Alpha 5 自带 CLI 安装到该版本独立 Home：
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
-& $Dsh plugin --profile web add 'C:\dsh-plugins-alpha2\dsh-relay-overview'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web add 'C:\DSH-Versions\0.1.2-alpha.5\plugin-packages\dsh-relay-overview-0.10.0.tgz'
 ```
 
 普通安装无需手工编辑 Profile YAML；CLI 会添加本地包依赖、Profile bundle，并应用包内 Composition patch。
@@ -89,11 +89,11 @@ $Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cm
 | `usagePath` | `auto` | 自动尝试基于 `baseURL` 推导的 `/usage` 与 `/v1/usage` 候选路径 |
 | `allowRemote` | `false` | 仅放宽余额状态接口的直接回环限制；不会放宽历史、测试或保存接口，也不会增加身份认证 |
 
-验证最终 Composition（该命令会按 Alpha 2 CLI 的正常行为准备 Profile 并重写生成的 `cordis.yml`）：
+验证最终 Composition：
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
 & $Dsh --profile web --dump-config
 ```
 
@@ -147,6 +147,7 @@ Sub2API 当前只对 `daily_usage` 应用 `timezone`；`model_stats` 的日期�
 pnpm install --ignore-workspace --frozen-lockfile
 pnpm bundle
 pnpm verify
+pnpm run verify:runtime -- "C:\DSH-Versions\0.1.2-alpha.5\runtime"
 pnpm pack --dry-run
 ```
 
@@ -158,7 +159,7 @@ pnpm pack --dry-run
 
 修改 Client 源码后必须运行 `pnpm bundle`。`pnpm verify` 只检查生成产物是否同步，不会自动重写它。
 
-生产依赖由 [`pnpm-lock.yaml`](pnpm-lock.yaml) 锁定。包没有 `preinstall`、`install` 或 `postinstall` 脚本；`prepack` 只在打包时运行验证。发布白名单只包含 Host、Client 生成产物、Composition patch、README、LICENSE 和 `package.json`。
+生产依赖由 [`pnpm-lock.yaml`](pnpm-lock.yaml) 锁定。包没有 `preinstall`、`install` 或 `postinstall` 脚本；`prepack` 只在打包时运行验证。发布白名单只包含 Host、Client 生成产物、Runtime 契约探针、Composition patch、README、兼容性说明、LICENSE 和 `package.json`。
 
 ### DSH 升级检查
 
@@ -172,14 +173,14 @@ pnpm pack --dry-run
 ### 卸载
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
 & $Dsh plugin --profile web remove dsh-relay-overview
 ```
 
 仅当你曾在 Profile `cordis.patch.yml` 中手工添加 `relay-overview` 覆盖时，才需要同时删除该覆盖。随后由用户重启现有 DSH Web 进程并刷新页面。
 
-插件当前没有卸载清理钩子；移除包不会主动删除已保存的 Settings 或插件托管 Credential。不要为清理插件而删除或重置整个 `.dsh-alpha2` 或 `.dsh` 目录。
+插件当前没有卸载清理钩子；移除包不会主动删除已保存的 Settings 或插件托管 Credential。不要为清理插件而删除或重置 `C:\DSH-Versions\0.1.2-alpha.5\home`、旧 `.dsh-alpha2` 或其他 DSH Home。
 
 ### 许可证
 
@@ -191,7 +192,7 @@ MIT License。详见 [LICENSE](LICENSE)。
 
 `dsh-relay-overview` is a relay quota and recent-usage overview installed into a DSH Web Profile. It has a generic **Relay Overview** identity. Its current `sub2api` adapter reads the quota contract exposed by Sub2API and compatible implementations.
 
-This source tree targets only DSH `0.1.2-alpha.2` and uses that version's `ctx.remote.credentials` Client API. It is not compatible with older DSH releases.
+This source tree targets only the audited DSH `0.1.2-alpha.5` release and uses that version's `ctx.remote.credentials` Client API. It is not compatible with other DSH releases.
 
 “Sub2API-compatible” describes an API contract; it does not establish which source code a relay runs.
 
@@ -210,18 +211,18 @@ Daily usage explicitly requests `timezone=Asia/Shanghai`. Model-stat date labels
 
 The authoritative constraints are in [`package.json`](package.json):
 
-- DSH `0.1.2-alpha.2` only
+- DSH `0.1.2-alpha.5` only
 - Node.js `>=22.19.0`
 - A Sub2API-compatible quota endpoint; an OpenAI-compatible model endpoint alone is not sufficient
 
 ### Install
 
-This Alpha 2 adaptation lives at `C:\dsh-plugins-alpha2\dsh-relay-overview`. Install it into the Alpha 2 home with the matching CLI:
+This Alpha 5 adaptation lives at `C:\DSH-Versions\0.1.2-alpha.5\plugins\dsh-relay-overview`. After verification and packaging, install the pinned tarball into the independent Alpha 5 home with its matching CLI:
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
-& $Dsh plugin --profile web add 'C:\dsh-plugins-alpha2\dsh-relay-overview'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
+& $Dsh plugin --profile web add 'C:\DSH-Versions\0.1.2-alpha.5\plugin-packages\dsh-relay-overview-0.10.0.tgz'
 ```
 
 The CLI adds the local dependency and Profile bundle and applies the package Composition patch; normal installation does not require a manual Profile YAML edit.
@@ -244,11 +245,11 @@ For an advanced Profile override, repeat the complete config object:
     allowRemote: false
 ```
 
-A Profile row override replaces the entire `config`. Validate the result with the matching Alpha 2 CLI (the command prepares the Profile and rewrites its generated `cordis.yml` as part of normal CLI behavior):
+A Profile row override replaces the entire `config`. Validate the result with the matching Alpha 5 CLI:
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
 & $Dsh --profile web --dump-config
 ```
 
@@ -275,10 +276,11 @@ History output contains only 30 validated daily aggregates, a summary, and model
 
 ### Development
 
-```sh
+```powershell
 pnpm install --ignore-workspace --frozen-lockfile
 pnpm bundle
 pnpm verify
+pnpm run verify:runtime -- "C:\DSH-Versions\0.1.2-alpha.5\runtime"
 pnpm pack --dry-run
 ```
 
@@ -289,12 +291,12 @@ Runtime integration uses the public `sidebar.footer.action` and `settings.sectio
 ### Uninstall
 
 ```powershell
-$env:DSH_HOME = 'C:\Users\12187\.dsh-alpha2'
-$Dsh = 'C:\Users\12187\AppData\Local\dsh-runtime\alpha2\node_modules\.bin\dsh.cmd'
+$env:DSH_HOME = 'C:\DSH-Versions\0.1.2-alpha.5\home'
+$Dsh = 'C:\DSH-Versions\0.1.2-alpha.5\runtime\node_modules\.bin\dsh.cmd'
 & $Dsh plugin --profile web remove dsh-relay-overview
 ```
 
-Remove a `relay-overview` Profile patch only if you added one manually, then have the user restart the existing DSH Web process and refresh the page. There is currently no uninstall cleanup hook, so removing the package does not actively delete saved Settings or managed Credentials. Never delete or reset the entire `.dsh-alpha2` or `.dsh` directory to clean up this plugin.
+Remove a `relay-overview` Profile patch only if you added one manually, then have the user restart the existing DSH Web process and refresh the page. There is currently no uninstall cleanup hook, so removing the package does not actively delete saved Settings or managed Credentials. Never delete or reset `C:\DSH-Versions\0.1.2-alpha.5\home`, the legacy `.dsh-alpha2`, or another DSH Home to clean up this plugin.
 
 ### License
 

@@ -9,16 +9,16 @@
 - 当前首个适配器：`sub2api`。
 - “Sub2API-compatible”只表示额度接口协议兼容，不代表目标站点运行原版 Sub2API，也不能据此声称其源码来源。
 - 这是永久安装到 DSH Web Profile 的 Cordis Profile Bundle，不是仅在当前进程中存在的 Dynamic Cordis Plugin。
-- 此分支源码固定位置：`C:\dsh-plugins-alpha2\dsh-relay-overview`。
-- 仅支持 DSH `0.1.2-alpha.2`，不兼容旧版 DSH；Client Credential API 使用 `ctx.remote.credentials`。
-- 目标 Web Profile composition：`C:\Users\12187\.dsh-alpha2\profiles\web\cordis.yml` 及其 `cordis.patch.yml`。
+- 此分支源码固定位置：`C:\DSH-Versions\0.1.2-alpha.5\plugins\dsh-relay-overview`。
+- 仅支持已审计的 DSH `0.1.2-alpha.5`，不兼容其他 DSH 版本；Client Credential API 使用 `ctx.remote.credentials`。
+- 目标 Web Profile composition：`C:\DSH-Versions\0.1.2-alpha.5\home\profiles\web\package.json` 及其 `cordis.patch.yml`。
 - 插件 row id：`relay-overview`。
 
 ## 2. DSH Runtime 与插件源码的边界
 
 - DeepSeek Harness（DSH）Runtime 和本插件是两个分开存放、分开维护的项目。
-- DSH Runtime 安装在 `C:\Users\12187\AppData\Local\dsh-runtime\<版本目录>`；版本升级可能更换该版本目录。
-- 插件源码独立位于 `C:\dsh-plugins-alpha2\dsh-relay-overview`，不放进 Profile 或 Runtime；正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
+- 目标 DSH Runtime 固定安装在 `C:\DSH-Versions\0.1.2-alpha.5\runtime`；不得从其他版本路径推断或替换它。
+- 插件源码独立位于 `C:\DSH-Versions\0.1.2-alpha.5\plugins\dsh-relay-overview`，不放进 Profile 或 Runtime；正常升级 DSH Runtime 不应修改、迁移或覆盖此源码仓库。
 - 不要从某个旧版本号推断当前 Runtime 路径。需要检查 DSH 本体时，先确认当前实际版本和 checkout。
 - DSH 升级不会自动改变插件源码，但可能改变插件依赖的 Service、Slot、Settings、Client Runtime、构建产物协议或页面布局。因此“源码未变”不等于“运行兼容性必然不变”。升级后必须执行本文件的兼容性检查。
 - 只有在用户明确要求修改 DSH 本体时，才可以编辑 Runtime checkout。不要为了实现插件功能而偷偷修改已安装的 DSH 文件。
@@ -80,9 +80,9 @@
 ### Composition
 
 - 包内默认 row：`cordis.patch.yml`。
-- Web Profile 的部署覆盖：`C:\Users\12187\.dsh-alpha2\profiles\web\cordis.patch.yml`。
+- Web Profile 的部署覆盖：`C:\DSH-Versions\0.1.2-alpha.5\home\profiles\web\cordis.patch.yml`。
 - Profile patch 覆盖 row config 时会替换整个 `config`，所以覆盖项必须重述完整配置键。
-- 修改 Composition 前必须检查当前 Alpha 2 的 Composition 规则，并使用匹配版本的 DSH CLI 执行 dump/validation。
+- 修改 Composition 前必须检查当前 Alpha 5 的 Composition 规则，并使用匹配版本的 DSH CLI 执行 dump/validation。
 
 ## 5. 额度语义不变量
 
@@ -135,6 +135,7 @@
 pnpm install --ignore-workspace --frozen-lockfile
 pnpm bundle
 pnpm verify
+pnpm run verify:runtime -- "C:\DSH-Versions\0.1.2-alpha.5\runtime"
 pnpm pack --dry-run
 ```
 
@@ -142,22 +143,24 @@ pnpm pack --dry-run
 
 1. 若修改 Client 源码，运行 `pnpm bundle`。
 2. 运行 `pnpm verify`。
-3. 运行 `pnpm pack --dry-run` 检查发布内容。
-4. 使用当前 DSH CLI 对 Web Profile 执行 composition dump/validation。
-5. 如需让正在运行的 GUI 载入新的 Host 或普通 Web 产物，只告诉用户需要重启或刷新及原因；不得由 Agent 自行重启。
+3. 运行 `pnpm run verify:runtime -- "C:\DSH-Versions\0.1.2-alpha.5\runtime"` 检查已审计的 Runtime 契约。
+4. 运行 `pnpm pack --dry-run` 检查发布内容。
+5. 使用当前 DSH CLI 对 Web Profile 执行 composition dump/validation。
+6. 如需让正在运行的 GUI 载入新的 Host 或普通 Web 产物，只告诉用户需要重启或刷新及原因；不得由 Agent 自行重启。
 
 ## 9. DSH 升级后的兼容性检查
 
 每次 DSH Runtime 升级后，至少确认：
 
 1. `pnpm verify` 全部通过，Client 生成产物没有漂移。
-2. 当前 Web Profile composition 能成功解析。
-3. `/relay-overview/status` 与 `/relay-overview/history` 返回 200，且只含归一化后的公开字段；模型聚合只含模型名和调用次数。
-4. 设置页仍只显示近 30 天热力图、模型调用量环形图、URL、API Key、测试连接和测试并保存。
-5. API Key 保存后不回填；跨 origin 留空 Key 仍被拒绝。
-6. 展开侧栏仍是完整 footer row；折叠时 Relay、Cordis 和 Settings 布局正常。
-7. 点击、分钟、页面可见性和超时刷新仍正常。
-8. 当前版本的 `settings.section`、`sidebar.footer.action`、Settings 和 Credential API 签名没有破坏性变化。
+2. `pnpm run verify:runtime -- "C:\DSH-Versions\0.1.2-alpha.5\runtime"` 全部通过。
+3. 当前 Web Profile composition 能成功解析。
+4. `/relay-overview/status` 与 `/relay-overview/history` 返回 200，且只含归一化后的公开字段；模型聚合只含模型名和调用次数。
+5. 设置页仍只显示近 30 天热力图、模型调用量环形图、URL、API Key、测试连接和测试并保存。
+6. API Key 保存后不回填；跨 origin 留空 Key 仍被拒绝。
+7. 展开侧栏仍是完整 footer row；折叠时 Relay、Cordis 和 Settings 布局正常。
+8. 点击、分钟、页面可见性和超时刷新仍正常。
+9. 当前版本的 `settings.section`、`sidebar.footer.action`、Settings 和 Credential API 签名没有破坏性变化。
 
 测试通过只能说明覆盖范围内兼容；涉及新 DSH UI 能力时仍应检查当前 Runtime 的真实公开协议。
 

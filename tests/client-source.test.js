@@ -706,7 +706,7 @@ test('unlimited rendering is explicit and remains accessible', () => {
   assert.match(wide.props['aria-label'], /不限额/)
 })
 
-test('client source preserves lifecycle, generic Slot identity, and Alpha2 Slot layout compatibility', () => {
+test('client source preserves lifecycle, generic Slot identity, and Alpha5 Slot layout compatibility', () => {
   assert.match(source, /CLIENT_TIMEOUT_MS = 20_000/)
   assert.match(source, /visibilitychange/)
   assert.match(source, /manager\.abort\(\)/)
